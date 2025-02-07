@@ -22,8 +22,11 @@ var EmailDomainStopWords = []string{
 	"bol.com",
 	"ig.com",
 	"instagram.com",
+	"mail.ru",
+	"email.com",
+	"ibest.com",
+	"oi.com",
 }
-
 
 var UrlDomainStopWords = []string{
 	"linkedin.com",
@@ -41,6 +44,9 @@ var UrlDomainStopWords = []string{
 	"instagram.com",
 	"www.godaddy.com",
 	"tiktok.com",
+	"www.paypal.com",
+	"www.netflix.com",
+	"www.roblox.com",
 }
 
 var DefaultStopWords = []string{
