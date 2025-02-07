@@ -6,6 +6,7 @@ import (
     "path/filepath"
     //"fmt"
     "os"
+    "time"
 
     "github.com/helviojunior/intelparser/internal/ascii"
     "github.com/helviojunior/intelparser/internal/islazy"
@@ -70,7 +71,6 @@ func AddFolder(temp_folder string, folder_path string) error {
 }
 
 var parserDriver runner.ParserDriver
-
 var intelxCmdOptions = &readers.FileReaderOptions{}
 var intelxCmd = &cobra.Command{
     Use:   "intelx",
@@ -164,7 +164,12 @@ Parse IntelX downloaded files (ZIP or folder).
         status := scanRunner.Run()
         scanRunner.Close()
 
+
+        diff := time.Now().Sub(startTime)
+        out := time.Time{}.Add(diff)
+
         st := "Execution statistics\n"
+        st += "     -> Elapsed time.....: %s\n"
         st += "     -> Parsed...........: %d\n"
         st += "     -> Skipped..........: %d\n"
         st += "     -> Execution error..: %d\n"
@@ -173,12 +178,13 @@ Parse IntelX downloaded files (ZIP or folder).
         st += "     -> E-mails..........: %d\n"
 
         log.Warnf(st, 
-             status.Parsed, 
-             status.Skipped,
-             status.Error,
-             status.Credential,
-             status.Url,
-             status.Email,
+            out.Format("15:04:05"),
+            status.Parsed, 
+            status.Skipped,
+            status.Error,
+            status.Credential,
+            status.Url,
+            status.Email,
         )
 
         islazy.RemoveFolder(tempFolder)

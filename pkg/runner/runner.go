@@ -479,6 +479,10 @@ func (run *Runner) DetectFile(file *models.File) error {
                 FilePath: file.FilePath,
             }
             for _, finding := range run.Detect(fragment) {
+                if !run.status.Running {
+                    return nil
+                }
+
                 // need to add 1 since line counting starts at 1
                 finding.StartLine += (totalLines - linesInChunk) + 1
                 finding.EndLine += (totalLines - linesInChunk) + 1
@@ -655,6 +659,10 @@ func (run *Runner) detectRule(fragment Fragment, currentRaw string, r *rules.Rul
 		findings []models.Finding
 		logger   = run.log.With("rule", r.RuleID)
 	)
+
+    if !run.status.Running {
+        return findings
+    }
 
 	if r.Path != nil && r.Regex == nil && len(encodedSegments) == 0 {
 		// Path _only_ rule
