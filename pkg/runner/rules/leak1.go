@@ -12,7 +12,7 @@ import (
 func EmailPass() *Rule {
     // define rule
     r := &Rule{
-        RuleID:      "Email:Pass",
+        RuleID:      "Leak1 » Email:Pass",
         Description: "Extract Email:Pass leaks",
         Regex:       re.MustCompile(`` +
                         `(?i)` +  // Case-insensitive matching

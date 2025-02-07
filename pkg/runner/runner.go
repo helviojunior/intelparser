@@ -165,7 +165,7 @@ func (id *Identifiers) LoadRules() error {
 		rules.Url(),
 		rules.Email(),
         rules.EmailPass(),
-        rules.UrlEmailPass(),
+        rules.Leak2(),
 	}
 
 	uniqueKeywords := make(map[string]struct{})

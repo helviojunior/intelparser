@@ -26,6 +26,8 @@ var EmailDomainStopWords = []string{
 	"email.com",
 	"ibest.com",
 	"oi.com",
+	"ymail.com",
+	"yandex.ru",
 }
 
 var UrlDomainStopWords = []string{
@@ -47,6 +49,9 @@ var UrlDomainStopWords = []string{
 	"www.paypal.com",
 	"www.netflix.com",
 	"www.roblox.com",
+	"www.amazon.com",
+	"ymail.com",
+	"yandex.ru",
 }
 
 var DefaultStopWords = []string{

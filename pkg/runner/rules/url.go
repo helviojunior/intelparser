@@ -20,11 +20,13 @@ func Url() *Rule {
         CheckGlobalStopWord: false,
         PostProcessor : func(finding *models.Finding) (bool, error) {
 
-            us := finding.Secret
-            us = strings.Replace(us, "http://http://", "http://", -1)
-            us = strings.Replace(us, "https://https://", "https://", -1)
+            u1 := finding.Secret
+            u1 = strings.Replace(u1, "http://http://", "http://", -1)
+            u1 = strings.Replace(u1, "https://https://", "https://", -1)
+            u1 = strings.Replace(u1, "http://https://", "https://", -1)
+            u1 = strings.Replace(u1, "https://http://", "http://", -1)
 
-            u, err := url.Parse(us)
+            u, err := url.Parse(u1)
             if err != nil {
                 return false, err
             }
@@ -32,7 +34,7 @@ func Url() *Rule {
             finding.Url = models.URL{
                 Time        : time.Now(),
                 Domain      : strings.ToLower(u.Hostname()),
-                Url         : finding.Secret,
+                Url         : u1,
             }
             return true, nil
         },
