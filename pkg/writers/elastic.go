@@ -522,7 +522,7 @@ func (ew *ElasticWriter) CreateDocBulk(index string, docs map[string][]byte) err
                     //
                     if d.Index.Status > 201 {
                         // ... and print the response status and error information ...
-                        fmt.Printf("  Error: [%d]: %s: %s: %s: %s",
+                        logger.Debugf("  Error: [%d]: %s: %s: %s: %s",
                             d.Index.Status,
                             d.Index.Error.Type,
                             d.Index.Error.Reason,
