@@ -48,5 +48,5 @@ jobs:
 
       - name: Verify Installation
         run: |
-          intelparser spray -h
+          intelparser parse -h
           intelparser version
