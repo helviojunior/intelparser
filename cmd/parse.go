@@ -1,6 +1,7 @@
 package cmd
 
 import (
+    "strings"
 
     "github.com/helviojunior/intelparser/internal/ascii"
     //"github.com/helviojunior/intelparser/internal/islazy"
@@ -38,8 +39,10 @@ var parserCmd = &cobra.Command{
             return err
         }
 
+        opts.Writer.GlobalDbURI = strings.Replace(opts.Writer.GlobalDbURI, "~", opts.Writer.UserPath, 1)
+
         //The first one is the general writer (global user)
-        w, err := writers.NewDbWriter("sqlite:///" + opts.Writer.UserPath +"/.intelparser.db", false)
+        w, err := writers.NewDbWriter(opts.Writer.GlobalDbURI, false)
         if err != nil {
             return err
         }
@@ -115,8 +118,9 @@ func init() {
     parserCmd.PersistentFlags().IntVarP(&opts.Parser.Threads, "threads", "t", 10, "Number of concurrent threads (goroutines) to use")
     
     // Write options for scan subcommands
+    parserCmd.PersistentFlags().StringVar(&opts.Writer.GlobalDbURI, "global-db-uri", "sqlite:///~/.intelparser.db", "The global database URI to use.")
     parserCmd.PersistentFlags().BoolVar(&opts.Writer.Db, "write-db", false, "Write results to a SQLite database")
-    parserCmd.PersistentFlags().StringVar(&opts.Writer.DbURI, "write-db-uri", "sqlite://intelparser.sqlite3", "The database URI to use. Supports SQLite, Postgres, and MySQL (e.g., postgres://user:pass@host:port/db)")
+    parserCmd.PersistentFlags().StringVar(&opts.Writer.DbURI, "write-db-uri", "sqlite:///intelparser.sqlite3", "The database URI to use. Supports SQLite, Postgres, and MySQL (e.g., postgres://user:pass@host:port/db)")
     parserCmd.PersistentFlags().BoolVar(&opts.Writer.DbDebug, "write-db-enable-debug", false, "Enable database query debug logging (warning: verbose!)")
     parserCmd.PersistentFlags().BoolVar(&opts.Writer.Csv, "write-csv", false, "Write results as CSV (has limited columns)")
     parserCmd.PersistentFlags().StringVar(&opts.Writer.CsvFile, "write-csv-file", "intelparser.csv", "The file to write CSV rows to")

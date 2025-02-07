@@ -23,6 +23,7 @@ type Logging struct {
 // Writer options
 type Writer struct {
     UserPath  string
+    GlobalDbURI string
     Db        bool
     DbURI     string
     DbDebug   bool // enables verbose database logs

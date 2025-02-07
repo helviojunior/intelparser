@@ -67,10 +67,11 @@ type IntelxParser struct {
 
 // NewChromedp returns a new Chromedp instance
 func NewInteX(logger *slog.Logger, opts runner.Options) (*IntelxParser, error) {
-
-	conn, err := database.Connection("sqlite:///" + opts.Writer.UserPath +"/.intelparser.db", true, false)
+	var conn *gorm.DB
+	var err error
+	conn, err = database.Connection(opts.Writer.GlobalDbURI, true, false)
 	if err != nil {
-		return nil, err
+		conn = nil
 	}
 
 	return &IntelxParser{
@@ -109,15 +110,17 @@ func (run *IntelxParser) ParseFile(thisRunner *runner.Runner, file_path string) 
 	result.Fingerprint, _ = islazy.GetHashFromFile(file_path)
 	result.MIMEType, _ = islazy.GetMimeType(file_path)
 
-	response := run.conn.Raw("SELECT count(id) as count from files WHERE failed = 0 AND file_name = ? AND fingerprint = ?", file_name_ext, result.Fingerprint)
-    if response != nil {
-        var cnt int
-        _ = response.Row().Scan(&cnt)
-        if cnt > 0 {
-            logger.Debug("[File already parsed]")
-            return nil, nil
-        }
-    }
+	if run.conn != nil {
+		response := run.conn.Raw("SELECT count(id) as count from files WHERE failed = 0 AND file_name = ? AND fingerprint = ?", file_name_ext, result.Fingerprint)
+	    if response != nil {
+	        var cnt int
+	        _ = response.Row().Scan(&cnt)
+	        if cnt > 0 {
+	            logger.Debug("[File already parsed]")
+	            return nil, nil
+	        }
+	    }
+	}
 
 	idx := slices.IndexFunc(run.info, func(i InfoData) bool { return i.SystemID == file_name })
 	logger.Debug("Get info", "info_idx", idx)
