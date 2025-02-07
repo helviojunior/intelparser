@@ -170,21 +170,21 @@ Parse IntelX downloaded files (ZIP or folder).
 
         st := "Execution statistics\n"
         st += "     -> Elapsed time.....: %s\n"
-        st += "     -> Parsed...........: %d\n"
-        st += "     -> Skipped..........: %d\n"
-        st += "     -> Execution error..: %d\n"
-        st += "     -> Credentials......: %d\n"
-        st += "     -> URLs.............: %d\n"
-        st += "     -> E-mails..........: %d\n"
+        st += "     -> Files parsed.....: %s\n"
+        st += "     -> Skipped..........: %s\n"
+        st += "     -> Execution error..: %s\n"
+        st += "     -> Credentials......: %s\n"
+        st += "     -> URLs.............: %s\n"
+        st += "     -> E-mails..........: %s\n"
 
         log.Warnf(st, 
             out.Format("15:04:05"),
-            status.Parsed, 
-            status.Skipped,
-            status.Error,
-            status.Credential,
-            status.Url,
-            status.Email,
+            islazy.FormatIntComma(status.Parsed), 
+            islazy.FormatIntComma(status.Skipped),
+            islazy.FormatIntComma(status.Error),
+            islazy.FormatIntComma(status.Credential),
+            islazy.FormatIntComma(status.Url),
+            islazy.FormatIntComma(status.Email),
         )
 
         islazy.RemoveFolder(tempFolder)
