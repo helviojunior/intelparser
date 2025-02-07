@@ -57,20 +57,14 @@ $ intelparser parse -h
  |_____|_| |_|\__\___|_|_|   \__,_|_|  |___/\___|_|
 
 
-
-
-
-   parse
-
-
 Usage:
   intelparser parse [command]
 
 Examples:
 
-
-  • intelparser parse intelx -p "~/Desktop/Search 2025-02-05 10_48_28.zip"
-
+   - intelparser parse intelx -p "~/Desktop/Search 2025-02-05 10_48_28.zip"
+   - intelparser parse intelx -p "~/Desktop/"
+   - intelparser parse intelx -p ~/Desktop/ --write-elastic --write-elasticsearch-uri "http://127.0.0.1:9200/intelparser"
 
 
 Available Commands:

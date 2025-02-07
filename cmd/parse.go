@@ -23,9 +23,11 @@ var parserCmd = &cobra.Command{
 # parse
 
 `)),
-    Example: ascii.Markdown(`
-- intelparser parse intelx -p "~/Desktop/Search 2025-02-05 10_48_28.zip"
-`),
+    Example: `
+   - intelparser parse intelx -p "~/Desktop/Search 2025-02-05 10_48_28.zip"
+   - intelparser parse intelx -p "~/Desktop/"
+   - intelparser parse intelx -p ~/Desktop/ --write-elastic --write-elasticsearch-uri "http://127.0.0.1:9200/intelparser"
+`,
     PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
         var err error
 
