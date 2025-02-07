@@ -26,6 +26,8 @@ type File struct {
 	MIMEType    		  string    `json:"mime_type"`
 	Fingerprint	    	  string   	`json:"fingerprint";gorm:"unique;not null"`
 
+	Content 		  	  string 	`json:"content"`
+
 	// Failed flag set if the result should be considered failed
 	Failed       		  bool   	`json:"failed"`
 	FailedReason 		  string 	`json:"failed_reason"`
@@ -139,12 +141,13 @@ func (file File) MarshalJSON() ([]byte, error) {
 		ProviderId	    	  string   	`json:"provider_id"`
 		MIMEType    		  string    `json:"mime_type"`
 		Fingerprint	    	  string   	`json:"fingerprint""`
+		Content 			  string   	`json:"content""`
 
 	}{
 		Provider 			: file.Provider,
 		FilePath 			: file.FilePath,
 		FileName 			: file.FileName,
-		Name 				: file.Name,
+		Name 				: strings.ToLower(file.Name),
 		LeakDate    		: file.Date.Format(time.RFC3339),
 		Bucket 				: file.Bucket,
 		MediaType 			: file.MediaType,
@@ -153,6 +156,7 @@ func (file File) MarshalJSON() ([]byte, error) {
 		ProviderId 			: file.ProviderId,
 		MIMEType 			: file.MIMEType,
 		Fingerprint			: file.Fingerprint,
+		Content			 	: file.Content,
 	})
 }
 

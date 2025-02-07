@@ -122,12 +122,7 @@ func NewElasticWriter(uri string) (*ElasticWriter, error) {
 	}
 
 	//File Index
-	response, err := wr.Client.Indices.Exists([]string{wr.Index})
-	if err != nil {
-	    return nil, err
-	}
-	if response.StatusCode == 404 {
-		mapping := `{
+	err = wr.CreateIndex(wr.Index, `{
 		    "settings": {
                     "number_of_replicas": 1,
                     "index": {"highlight.max_analyzed_offset": 10000000}
@@ -146,35 +141,17 @@ func NewElasticWriter(uri string) (*ElasticWriter, error) {
                     "provider": {"type": "keyword"},
                     "provider_id": {"type": "text"},
                     "bucket": {"type": "text"},
-                    "media_type": {"type": "text"}
+                    "media_type": {"type": "text"},
+                    "content": {"type": "text"}
                 }
             }
-		}`
-
-		indexReq := esapi.IndicesCreateRequest{
-		    Index: index_name,
-		    Body: strings.NewReader(string(mapping)),
-		}
-
-		logger.Infof("Creatting Elastic index %s", index_name)
-		res, err := indexReq.Do(context.Background(), wr.Client)
-		if err != nil {
-		    return nil, err
-		}
-		if res.StatusCode != 200 && res.StatusCode != 201 {
-			return nil, errors.New("Cannot create/update Elastic index")
-		}
-
-	}
-
-	//Credential Index
-	index_name = wr.Index + "_creds"
-	response, err = wr.Client.Indices.Exists([]string{index_name})
+		}`)
 	if err != nil {
 	    return nil, err
 	}
-	if response.StatusCode == 404 {
-		mapping := `{
+
+	//Credential Index
+	err = wr.CreateIndex(wr.Index + "_creds", `{
 		    "settings": {
                     "number_of_replicas": 1,
                     "index": {"highlight.max_analyzed_offset": 10000000}
@@ -197,33 +174,13 @@ func NewElasticWriter(uri string) (*ElasticWriter, error) {
                     "file_id": {"type": "keyword"}
                 }
             }
-		}`
-
-		indexReq := esapi.IndicesCreateRequest{
-		    Index: index_name,
-		    Body: strings.NewReader(string(mapping)),
-		}
-
-		logger.Infof("Creatting Elastic index %s", index_name)
-		res, err := indexReq.Do(context.Background(), wr.Client)
-		if err != nil {
-		    return nil, err
-		}
-		if res.StatusCode != 200 && res.StatusCode != 201 {
-			fmt.Printf("Err: %s", res)
-			return nil, errors.New("Cannot create/update Elastic index")
-		}
-
-	}
-
-	//Urls Index
-	index_name = wr.Index + "_urls"
-	response, err = wr.Client.Indices.Exists([]string{index_name})
+		}`)
 	if err != nil {
 	    return nil, err
 	}
-	if response.StatusCode == 404 {
-		mapping := `{
+
+	//Urls Index
+	err = wr.CreateIndex(wr.Index + "_urls", `{
 		    "settings": {
                     "number_of_replicas": 1,
                     "index": {"highlight.max_analyzed_offset": 10000000}
@@ -240,34 +197,14 @@ func NewElasticWriter(uri string) (*ElasticWriter, error) {
                     "file_id": {"type": "keyword"}
                 }
             }
-		}`
-
-		indexReq := esapi.IndicesCreateRequest{
-		    Index: index_name,
-		    Body: strings.NewReader(string(mapping)),
-		}
-
-		logger.Infof("Creatting Elastic index %s", index_name)
-		res, err := indexReq.Do(context.Background(), wr.Client)
-		if err != nil {
-		    return nil, err
-		}
-		if res.StatusCode != 200 && res.StatusCode != 201 {
-			fmt.Printf("Err: %s", res)
-			return nil, errors.New("Cannot create/update Elastic index")
-		}
-
+		}`)
+	if err != nil {
+	    return nil, err
 	}
 
 
 	//Emails Index
-	index_name = wr.Index + "_emails"
-	response, err = wr.Client.Indices.Exists([]string{index_name})
-	if err != nil {
-	    return nil, err
-	}
-	if response.StatusCode == 404 {
-		mapping := `{
+	err = wr.CreateIndex(wr.Index + "_emails", `{
 		    "settings": {
                     "number_of_replicas": 1,
                     "index": {"highlight.max_analyzed_offset": 10000000}
@@ -284,25 +221,15 @@ func NewElasticWriter(uri string) (*ElasticWriter, error) {
                     "file_id": {"type": "keyword"}
                 }
             }
-		}`
-
-		indexReq := esapi.IndicesCreateRequest{
-		    Index: index_name,
-		    Body: strings.NewReader(string(mapping)),
-		}
-
-		res, err := indexReq.Do(context.Background(), wr.Client)
-		if err != nil {
-		    return nil, err
-		}
-		if res.StatusCode != 200 && res.StatusCode != 201 {
-			fmt.Printf("Err: %s", res)
-			return nil, errors.New("Cannot create/update Elastic index")
-		}
-
+		}`)
+	if err != nil {
+	    return nil, err
 	}
+
 	return wr, nil
 }
+
+
 
 // Write JSON lines to a file
 func (ew *ElasticWriter) Write(result *models.File) error {
@@ -468,6 +395,66 @@ func (ew *ElasticWriter) Write(result *models.File) error {
 	}
 
 	return nil
+}
+
+func (ew *ElasticWriter) CreateIndex(index string, mapping string) error {
+
+	var raw map[string]interface{}
+
+	response, err := ew.Client.Indices.Exists([]string{index})
+	if err != nil {
+	    return err
+	}
+	defer response.Body.Close()
+
+    if response.IsError() {
+
+		if response.StatusCode == 404 {
+			indexReq := esapi.IndicesCreateRequest{
+			    Index: index,
+			    Body: strings.NewReader(string(mapping)),
+			}
+
+			logger.Infof("Creating elastic index %s", index)
+			res, err := indexReq.Do(context.Background(), ew.Client)
+			if err != nil {
+			    return err
+			}
+			defer res.Body.Close()
+
+			if res.IsError() {
+
+		        if err := json.NewDecoder(res.Body).Decode(&raw); err != nil {
+		            return errors.New(fmt.Sprintf("Failure to to parse response body: %s", err))
+		        } else {
+		            return errors.New(fmt.Sprintf("Cannot create/update elastic index [%d] %s: %s",
+		                res.StatusCode,
+		                raw["error"].(map[string]interface{})["type"],
+		                raw["error"].(map[string]interface{})["reason"],
+		            ))
+		        }
+
+			}
+
+		}else{
+
+	        if err := json.NewDecoder(response.Body).Decode(&raw); err != nil {
+	            return errors.New(fmt.Sprintf("Failure to to parse response body: %s", err))
+	        } else {
+	            return errors.New(fmt.Sprintf("Cannot get elastic index [%d] %s: %s",
+	                response.StatusCode,
+	                raw["error"].(map[string]interface{})["type"],
+	                raw["error"].(map[string]interface{})["reason"],
+	            ))
+	        }
+
+
+		}
+
+    }
+
+    return nil
+
 }
 
 func (ew *ElasticWriter) CreateDocBulk(index string, docs map[string][]byte) error {

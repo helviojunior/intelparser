@@ -11,6 +11,8 @@ import (
 	"errors"
 	"crypto/sha1"
     "encoding/hex"
+    "bufio"
+    "bytes"
 
 	"archive/zip"
     
@@ -35,6 +37,12 @@ func GetMimeType(s string) (string, error) {
      }
 
      filetype := http.DetectContentType(buff)
+     if strings.Contains(filetype, ";") {
+     	s1 := strings.SplitN(filetype, ";", 2)
+     	if s1[0] != "" && strings.Contains(s1[0], "/") {
+     		filetype = s1[0]
+     	}
+     } 
 
      return filetype, nil
 }
@@ -255,4 +263,26 @@ func GetHashFromFile(file_path string) (string, error) {
 
 	return hex.EncodeToString(h.Sum(nil)), nil
 
+}
+
+func ReadTextFile(file_path string) (string, error) {
+	f, err := os.Open(file_path)
+    if err != nil {
+        return "", err
+    }
+    defer f.Close()
+
+    br := bufio.NewReader(f)
+    r, _, err := br.ReadRune()
+    if err != nil {
+        return "", err
+    }
+    if r != '\uFEFF' {
+        br.UnreadRune() // Not a BOM -- put the rune back
+    }
+
+	buf := new(bytes.Buffer)
+	buf.ReadFrom(br)
+
+    return buf.String(), nil
 }

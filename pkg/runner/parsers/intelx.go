@@ -7,6 +7,7 @@ import (
 	//"errors"
 	//"fmt"
 	//"image"
+	"bufio"
 	"log/slog"
 	"encoding/csv"
 	"os"
@@ -18,6 +19,7 @@ import (
 	"time"
 	"strconv"
 	"slices"
+	"sync"
 
 	"github.com/helviojunior/intelparser/internal/islazy"
 	"github.com/helviojunior/intelparser/pkg/models"
@@ -25,6 +27,17 @@ import (
 	"github.com/helviojunior/intelparser/pkg/database"
 	"gorm.io/gorm"
 )
+
+
+var MustSaveBucketWords = []string{
+	"leaks",
+}
+
+var MustSaveNameWords = []string{
+	"passwords.txt",
+	"history.txt",
+	"autofills",
+}
 
 type InfoData struct {
 	Name string
@@ -48,6 +61,8 @@ type IntelxParser struct {
 	info []InfoData
 	//
 	conn *gorm.DB
+	//
+	infoMutex sync.Mutex
 }
 
 // NewChromedp returns a new Chromedp instance
@@ -63,6 +78,7 @@ func NewInteX(logger *slog.Logger, opts runner.Options) (*IntelxParser, error) {
 		log:     logger,
 		info: 	 []InfoData{},
 		conn:    conn,
+		infoMutex:   sync.Mutex{},
 	}, nil
 }
 
@@ -84,7 +100,7 @@ func (run *IntelxParser) ParseFile(thisRunner *runner.Runner, file_path string) 
 		}
 	)
 
-	if file_name_ext == "Info.csv" {
+	if strings.ToLower(file_name_ext) == "info.csv" {
 		err = run.ParseInfo(file_path)
 		return result, err
 	}
@@ -104,6 +120,7 @@ func (run *IntelxParser) ParseFile(thisRunner *runner.Runner, file_path string) 
     }
 
 	idx := slices.IndexFunc(run.info, func(i InfoData) bool { return i.SystemID == file_name })
+	logger.Debug("Get info", "info_idx", idx)
 	if idx >= 0 {
 		info := run.info[idx]
 		result.Name = info.Name
@@ -113,8 +130,9 @@ func (run *IntelxParser) ParseFile(thisRunner *runner.Runner, file_path string) 
 		result.Size = info.Size
 		result.ProviderId = info.SystemID
 		result.Date = info.Date
-
+		logger.Debug("Get info", "info_data", info)
 	}
+
 	logger = run.log.With("file", file_name_ext)
 	logger.Debug("Parsing file")
 
@@ -122,11 +140,42 @@ func (run *IntelxParser) ParseFile(thisRunner *runner.Runner, file_path string) 
 		return result, err
 	}
 
+	//Check if we must save the file content
+	if run.MustSaveContent(result) { //&& result.MIMEType == "text/plain" {
+		logger.Debug("saving file content")
+		result.Content, _ = islazy.ReadTextFile(result.FilePath)
+	}
+
 	return result, nil
+}
+
+func (run *IntelxParser) MustSaveContent(file *models.File) bool {
+    s := strings.ToLower(file.Bucket)
+    n := strings.ToLower(file.Name)
+
+	for _, bucketWord := range MustSaveBucketWords {
+		if strings.Contains(s, strings.ToLower(bucketWord)) {
+		    for _, nameWord := range MustSaveNameWords {
+		        if strings.Contains(n, strings.ToLower(nameWord)) {
+		            return true
+		        }
+		    }
+        }
+    }
+
+    return false
 }
 
 func (run *IntelxParser) Close() {
 	run.log.Debug("closing IntelX parser context")
+}
+
+func GetOrDefault(data []string, index int, def string) string {
+	if index == -1 {
+		return def
+	}
+
+	return strings.Trim(string(data[index]), " \r\n\t")
 }
 
 func (run *IntelxParser) ParseInfo(file_path string) error {
@@ -136,20 +185,29 @@ func (run *IntelxParser) ParseInfo(file_path string) error {
     }
     defer f.Close()
 
-    csvReader := csv.NewReader(f)
+    br := bufio.NewReader(f)
+    r, _, err := br.ReadRune()
+    if err != nil {
+        return err
+    }
+    if r != '\uFEFF' {
+        br.UnreadRune() // Not a BOM -- put the rune back
+    }
+
+    csvReader := csv.NewReader(br)
     records, err := csvReader.ReadAll()
     if err != nil {
         return err
     }
 
-    Name := 0
-	Date := 0
-	Bucket := 0
-	Media := 0
-	Content := 0
-	Type := 0
-	Size := 0
-	SystemID := 0
+    Name := -1
+	Date := -1
+	Bucket := -1
+	Media := -1
+	Content := -1
+	Type := -1
+	Size := -1
+	SystemID := -1
 
 	for idx, c := range records[0] {
 		switch strings.ToLower(c) {
@@ -173,6 +231,9 @@ func (run *IntelxParser) ParseInfo(file_path string) error {
 	    }
 	}
 
+	run.infoMutex.Lock()
+	defer run.infoMutex.Unlock()
+
 	for idx, rec := range records {
 		if idx > 0 {
 			s, err := strconv.Atoi(rec[Size])
@@ -180,25 +241,23 @@ func (run *IntelxParser) ParseInfo(file_path string) error {
 				s = 0
 			}
 
-			dt, err := time.Parse("2006-01-02 15:04:05", rec[Date])
+			dt, err := time.Parse("2006-01-02 15:04:05", GetOrDefault(rec, Date, ""))
 			if err != nil {
 				dt = time.Now()
 			}
 
 			run.info = append(run.info, InfoData{
-                            Name:  		rec[Name],
+                            Name:  		GetOrDefault(rec, Name, ""),
                             Date:  		dt,
-                            Bucket:  	rec[Bucket],
-                            Media:  	rec[Media],
-                            Content:  	rec[Content],
-                            Type:  		rec[Type],
+                            Bucket:  	GetOrDefault(rec, Bucket, ""),
+                            Media:  	GetOrDefault(rec, Media, ""),
+                            Content:  	GetOrDefault(rec, Content, ""),
+                            Type:  		GetOrDefault(rec, Type, ""),
                             Size:  		uint(s),
-                            SystemID:  	rec[SystemID],
+                            SystemID:  	GetOrDefault(rec, SystemID, ""),
                         })
 		}
 	}
-
-
 
     return nil
 }
