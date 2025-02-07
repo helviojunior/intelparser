@@ -1,10 +1,10 @@
 package cmd
 
 import (
-    "strings"
+    "os"
 
     "github.com/helviojunior/intelparser/internal/ascii"
-    //"github.com/helviojunior/intelparser/internal/islazy"
+    "github.com/helviojunior/intelparser/internal/islazy"
     "github.com/helviojunior/intelparser/pkg/log"
     "github.com/helviojunior/intelparser/pkg/runner"
     //"github.com/helviojunior/intelparser/pkg/database"
@@ -16,6 +16,7 @@ import (
 
 var scanWriters = []writers.Writer{}
 var scanRunner *runner.Runner
+var tempFolder string
 
 var parserCmd = &cobra.Command{
     Use:   "parse",
@@ -39,7 +40,16 @@ var parserCmd = &cobra.Command{
             return err
         }
 
-        opts.Writer.GlobalDbURI = strings.Replace(opts.Writer.GlobalDbURI, "~", opts.Writer.UserPath, 1)
+        opts.Writer.GlobalDbURI = "sqlite:///"+ opts.Writer.UserPath + "/.intelparser.db"
+
+        if tempFolder, err = islazy.CreateDir(islazy.TempFileName("", "intelparser_", "")); err != nil {
+            log.Error("error creatting temp folder", "err", err)
+            os.Exit(2)
+        }
+
+        if opts.Writer.NoControlDb {
+            opts.Writer.GlobalDbURI = "sqlite:///"+ islazy.TempFileName(tempFolder, "intelparser_", ".db")
+        }
 
         //The first one is the general writer (global user)
         w, err := writers.NewDbWriter(opts.Writer.GlobalDbURI, false)
@@ -117,8 +127,8 @@ func init() {
 
     parserCmd.PersistentFlags().IntVarP(&opts.Parser.Threads, "threads", "t", 10, "Number of concurrent threads (goroutines) to use")
     
-    // Write options for scan subcommands
-    parserCmd.PersistentFlags().StringVar(&opts.Writer.GlobalDbURI, "global-db-uri", "sqlite:///~/.intelparser.db", "The global database URI to use.")
+    parserCmd.PersistentFlags().BoolVar(&opts.Writer.NoControlDb, "disable-control-db", false, "Disable utilization of database ~/.intelparser.db.")
+
     parserCmd.PersistentFlags().BoolVar(&opts.Writer.Db, "write-db", false, "Write results to a SQLite database")
     parserCmd.PersistentFlags().StringVar(&opts.Writer.DbURI, "write-db-uri", "sqlite:///intelparser.sqlite3", "The database URI to use. Supports SQLite, Postgres, and MySQL (e.g., postgres://user:pass@host:port/db)")
     parserCmd.PersistentFlags().BoolVar(&opts.Writer.DbDebug, "write-db-enable-debug", false, "Enable database query debug logging (warning: verbose!)")

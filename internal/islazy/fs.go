@@ -13,6 +13,7 @@ import (
     "encoding/hex"
     "bufio"
     "bytes"
+    "math/rand"
 
 	"archive/zip"
     
@@ -120,6 +121,16 @@ func SafeFileName(s string) string {
 	}
 
 	return builder.String()
+}
+
+func TempFileName(base_path, prefix, suffix string) string {
+    randBytes := make([]byte, 16)
+    rand.Read(randBytes)
+
+    if base_path == "" {
+    	base_path = os.TempDir()
+    }
+    return filepath.Join(base_path, prefix+hex.EncodeToString(randBytes)+suffix)
 }
 
 // FileExists returns true if a path exists

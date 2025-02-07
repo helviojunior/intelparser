@@ -140,8 +140,8 @@ func (file File) MarshalJSON() ([]byte, error) {
 		Size		       	  uint   	`json:"size"`
 		ProviderId	    	  string   	`json:"provider_id"`
 		MIMEType    		  string    `json:"mime_type"`
-		Fingerprint	    	  string   	`json:"fingerprint""`
-		Content 			  string   	`json:"content""`
+		Fingerprint	    	  string   	`json:"fingerprint"`
+		Content 			  string   	`json:"content,omitempty"`
 
 	}{
 		Provider 			: file.Provider,
@@ -166,14 +166,14 @@ func (cred Credential) MarshalJSON() ([]byte, error) {
 	return json.Marshal(&struct {
 		Rule                  string    `json:"rule"`
 		Time 	              string    `json:"time"`
-		UserDomain 	    	  string   	`json:"user_domain"`
+		UserDomain 	    	  string   	`json:"user_domain,omitempty"`
 		Username    		  string    `json:"username"`
-		Password	    	  string   	`json:"password""`
-		Url 		    	  string   	`json:"url""`
-		UrlDomain			  string    `json:"url_domain"`
-		Severity	    	  int   	`json:"severity""`
-		Entropy  	    	  float32  	`json:"entropy""`
-		NearText	    	  string   	`json:"near_text""`
+		Password	    	  string   	`json:"password"`
+		Url 		    	  string   	`json:"url,omitempty"`
+		UrlDomain			  string    `json:"url_domain,omitempty"`
+		Severity	    	  int   	`json:"severity"`
+		Entropy  	    	  float32  	`json:"entropy"`
+		NearText	    	  string   	`json:"near_text"`
 
 	}{
 		Rule 				: cred.Rule,
@@ -195,8 +195,8 @@ func (u URL) MarshalJSON() ([]byte, error) {
 	return json.Marshal(&struct {
 		Time 	              string    `json:"time"`
 		Domain   	    	  string   	`json:"domain"`
-		Url 		    	  string   	`json:"url""`
-		NearText	    	  string   	`json:"near_text""`
+		Url 		    	  string   	`json:"url"`
+		NearText	    	  string   	`json:"near_text"`
 
 	}{
 		Time 	    		: u.Time.Format(time.RFC3339),
@@ -211,8 +211,8 @@ func (eml Email) MarshalJSON() ([]byte, error) {
 	return json.Marshal(&struct {
 		Time 	              string    `json:"time"`
 		Domain   	    	  string   	`json:"domain"`
-		Email 		    	  string   	`json:"email""`
-		NearText	    	  string   	`json:"near_text""`
+		Email 		    	  string   	`json:"email"`
+		NearText	    	  string   	`json:"near_text"`
 
 	}{
 		Time 	    		: eml.Time.Format(time.RFC3339),

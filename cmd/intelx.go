@@ -117,7 +117,6 @@ Parse IntelX downloaded files (ZIP or folder).
     Run: func(cmd *cobra.Command, args []string) {
         var ft string
         var err error
-        var temp_folder string
 
         if ft, err = islazy.FileType(intelxCmdOptions.Path); err != nil {
             log.Error("error getting path type", "err", err)
@@ -126,17 +125,12 @@ Parse IntelX downloaded files (ZIP or folder).
 
         log.Debug("starting parsing scanning", "path", intelxCmdOptions.Path, "type", ft)
 
-        if temp_folder, err = islazy.CreateDir(".temp_IntelX"); err != nil {
-            log.Error("error creatting temp folder", "err", err)
-            os.Exit(2)
-        }
-
         go func() {
             defer close(scanRunner.Files)
 
             if ft == "file" {
                 //File
-                if err = AddZipFile(temp_folder, intelxCmdOptions.Path); err != nil {
+                if err = AddZipFile(tempFolder, intelxCmdOptions.Path); err != nil {
                     log.Error("error parsing ZIP file", "err", err)
                 }
 
@@ -146,7 +140,7 @@ Parse IntelX downloaded files (ZIP or folder).
                 info := filepath.Join(intelxCmdOptions.Path, "Info.csv")
                 if islazy.FileExists(info) {
                     
-                    if err = AddFolder(temp_folder, intelxCmdOptions.Path); err != nil {
+                    if err = AddFolder(tempFolder, intelxCmdOptions.Path); err != nil {
                         log.Error("error", "err", err)
                     }
 
@@ -159,7 +153,7 @@ Parse IntelX downloaded files (ZIP or folder).
                     }
 
                     for _, e := range entries {
-                        AddZipFile(temp_folder, filepath.Join(intelxCmdOptions.Path, e.Name()))
+                        AddZipFile(tempFolder, filepath.Join(intelxCmdOptions.Path, e.Name()))
                     }
                 }
 
@@ -187,7 +181,7 @@ Parse IntelX downloaded files (ZIP or folder).
              status.Email,
         )
 
-        islazy.RemoveFolder(temp_folder)
+        islazy.RemoveFolder(tempFolder)
 
     },
 }
