@@ -28,6 +28,7 @@ func Leak2() *Rule {
             var u1 string
             var u2 string
             var p1 string
+            var d1 string
  
             for _, p := range strings.Split(finding.Match, "\n") {
 
@@ -61,7 +62,13 @@ func Leak2() *Rule {
                 }
 
                 u2 = m.Address
+                d1 = finding.Email.Domain
 
+            }else if strings.Contains(u2, "\\") {
+                e1 := strings.SplitN(u2, "\\", 2)
+                if e1[0] != "" && e1[1] != "" {
+                    d1 = e1[0]
+                }
             }
 
             u1 = strings.Replace(u1, "http://http://", "http://", -1)
@@ -82,7 +89,8 @@ func Leak2() *Rule {
 
             finding.Credential = models.Credential{
                 Time        : time.Now(),
-                Domain      : finding.Email.Domain,
+                UserDomain  : d1,
+                UrlDomain   : finding.Url.Domain,
                 Username    : u2,
                 Password    : p1,
                 Url         : u1,

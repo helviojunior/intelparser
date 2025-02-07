@@ -813,7 +813,7 @@ func (run *Runner) detectRule(fragment Fragment, currentRaw string, r *rules.Rul
         if finding.Credential.Username != "" {
             if finding.Credential.Url == "" {
                 //Check Domain deny list
-                if ok, _ := ContainsEmailDomainStopWord(finding.Credential.Domain); ok {  
+                if ok, _ := ContainsEmailDomainStopWord(finding.Credential.UserDomain); ok {  
                     finding.Credential.Username = ""
                 }
             }

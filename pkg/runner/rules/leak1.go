@@ -48,10 +48,11 @@ func EmailPass() *Rule {
 
             finding.Credential = models.Credential{
                 Time        : time.Now(),
-                Domain      : finding.Email.Domain,
+                UserDomain  : finding.Email.Domain,
                 Username    : m.Address,
                 Password    : s1[1],
                 Url         : "",
+                UrlDomain   : "",
                 Severity    : 100,
                 Entropy     : finding.Entropy,
                 NearText    : finding.Match,

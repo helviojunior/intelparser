@@ -68,11 +68,12 @@ type Credential struct {
 	Rule        string      `json:"rule"`
 	Time        time.Time   `json:"time"`
 
-	Domain		string      `json:"domain"`
+	UserDomain	string      `json:"user_domain"`
 	Username    string      `json:"username"`
 	Password    string      `json:"password"`
 
 	Url         string      `json:"url"`
+	UrlDomain	string      `json:"url_domain"`
 
 	Severity    int 	    `json:"severity"`
 	Entropy     float32     `json:"entropy"`
@@ -161,10 +162,11 @@ func (cred Credential) MarshalJSON() ([]byte, error) {
 	return json.Marshal(&struct {
 		Rule                  string    `json:"rule"`
 		Time 	              string    `json:"time"`
-		Domain   	    	  string   	`json:"domain"`
+		UserDomain 	    	  string   	`json:"user_domain"`
 		Username    		  string    `json:"username"`
 		Password	    	  string   	`json:"password""`
 		Url 		    	  string   	`json:"url""`
+		UrlDomain			  string    `json:"url_domain"`
 		Severity	    	  int   	`json:"severity""`
 		Entropy  	    	  float32  	`json:"entropy""`
 		NearText	    	  string   	`json:"near_text""`
@@ -172,10 +174,11 @@ func (cred Credential) MarshalJSON() ([]byte, error) {
 	}{
 		Rule 				: cred.Rule,
 		Time 	    		: cred.Time.Format(time.RFC3339),
-		Domain 				: strings.ToLower(cred.Domain),
+		UserDomain			: strings.ToLower(cred.UserDomain),
 		Username 			: cred.Username,
 		Password 			: cred.Password,
 		Url 				: cred.Url,
+		UrlDomain			: strings.ToLower(cred.UrlDomain),
 		Severity 			: cred.Severity,
 		Entropy 			: cred.Entropy,
 		NearText 			: cred.NearText,
