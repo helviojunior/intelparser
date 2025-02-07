@@ -71,13 +71,14 @@ Available Commands:
   intelx      Parse IntelX downloaded files
 
 Flags:
+      --disable-control-db               Disable utilization of database ~/.intelparser.db.
   -h, --help                             help for parse
   -t, --threads int                      Number of concurrent threads (goroutines) to use (default 10)
       --write-csv                        Write results as CSV (has limited columns)
       --write-csv-file string            The file to write CSV rows to (default "intelparser.csv")
       --write-db                         Write results to a SQLite database
       --write-db-enable-debug            Enable database query debug logging (warning: verbose!)
-      --write-db-uri string              The database URI to use. Supports SQLite, Postgres, and MySQL (e.g., postgres://user:pass@host:port/db) (default "sqlite://intelparser.sqlite3")
+      --write-db-uri string              The database URI to use. Supports SQLite, Postgres, and MySQL (e.g., postgres://user:pass@host:port/db) (default "sqlite:///intelparser.sqlite3")
       --write-elastic                    Write results to a SQLite database
       --write-elasticsearch-uri string   The elastic search URI to use. (e.g., http://user:pass@host:9200/index) (default "http://localhost:9200/intelparser")
       --write-jsonl                      Write results as JSON lines
@@ -104,6 +105,36 @@ wget https://go.dev/dl/go1.23.5.linux-amd64.tar.gz
 rm -rf /usr/local/go && tar -C /usr/local -xzf go1.23.5.linux-amd64.tar.gz
 rm -rf /usr/bin/go && ln -s /usr/local/go/bin/go /usr/bin/go
 ```
+
+## Execation with ELK benchmark
+
+```bash
+# Compressed files size
+$ du -skh ~/Leaks_zip/
+1.8G  ~/Leaks_zip/
+
+# Extracted files size
+$ du -skh ~/Leaks_extracted/
+5.9G  ~/Leaks_extracted/
+
+# Number of files
+find ~/Leaks_extracted/ -type f | wc -l
+    1746
+
+$ intelparser parse intelx -p ~/Leaks_zip/ --write-elastic --write-elasticsearch-uri 'http://10.10.10.10:9200/test'
+
+WARN Execution statistics
+     -> Elapsed time.....: 00:29:56
+     -> Files parsed.....: 1.721
+     -> Skipped..........: 102
+     -> Execution error..: 4
+     -> Credentials......: 7.452.211
+     -> URLs.............: 22.446.484
+     -> E-mails..........: 21.817.512
+
+```
+
+![elk indices](images/elk.jpg "ELK Indices")
 
 ## Disclaimer
 
