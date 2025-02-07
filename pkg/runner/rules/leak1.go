@@ -9,21 +9,14 @@ import (
     "github.com/helviojunior/intelparser/pkg/models"
 )
 
-func EmailPass() *Rule {
+func Leak1() *Rule {
     // define rule
     r := &Rule{
         RuleID:      "Leak1 » Email:Pass",
         Description: "Extract Email:Pass leaks",
-        Regex:       re.MustCompile(`` +
-                        `(?i)` +  // Case-insensitive matching
-                        `([a-zA-Z0-9_\-\.]+` +  // Escaped characters in local part
-                        `[@|%40]` +  // Separator
-                        `[A-Z0-9](?:[A-Z0-9-]*[A-Z0-9])?` +  // Domain name
-                        `\.(?:[A-Z0-9](?:[A-Z0-9-]*[A-Z0-9])?)+` +  // Top-level domain and subdomains
-                        `:` +  // E-mail/pass Separator
-                        `([\S]+))` +  // Password
-                ``),
-        Entropy:     3,
+        Regex:       re.MustCompile(`(?i)([a-z0-9._-]+(@|%40)[a-z0-9.-]+\.[a-z]{2,}):([^\s\\]{3,})`),
+        Entropy:     0.91,
+        SecretGroup: 3,
         Keywords:    []string{"@", ":"},
         CheckGlobalStopWord: false,
         PostProcessor : func(finding *models.Finding) (bool, error) {

@@ -164,7 +164,7 @@ func (id *Identifiers) LoadRules() error {
 	id.Rules = []*rules.Rule{
 		rules.Url(),
 		rules.Email(),
-        rules.EmailPass(),
+        rules.Leak1(),
         rules.Leak2(),
 	}
 
@@ -700,7 +700,7 @@ func (run *Runner) detectRule(fragment Fragment, currentRaw string, r *rules.Rul
 //MatchLoop:
 	for _, matchIndex := range r.Regex.FindAllStringIndex(currentRaw, -1) {
 		// Extract secret from match
-		secret := strings.Trim(currentRaw[matchIndex[0]:matchIndex[1]], "\n")
+		secret := strings.Trim(currentRaw[matchIndex[0]:matchIndex[1]], "\n\r\t")
 
 		// For any meta data from decoding
 		var metaTags []string
@@ -720,6 +720,11 @@ func (run *Runner) detectRule(fragment Fragment, currentRaw string, r *rules.Rul
 			// removes the incorrectly following line that was detected by regex expression '\n'
 			matchIndex[1] = matchIndex[0] + len(secret)
 		}
+
+        //Recheck RegExp Match
+        //if !r.Regex.MatchString(secret) {
+        //    continue
+        //}
 
 		// determine location of match. Note that the location
 		// in the finding will be the line/column numbers of the _match_
@@ -788,14 +793,14 @@ func (run *Runner) detectRule(fragment Fragment, currentRaw string, r *rules.Rul
 		if r.Entropy != 0.0 {
 			// entropy is too low, skip this finding
 			if entropy <= r.Entropy {
-				logger.Debug("skipping finding: low entropy", "finding", finding.Secret, "entropy", finding.Entropy)
+				logger.Debug("skipping finding: low entropy", "match", finding.Match, "secret", finding.Secret, "entropy", finding.Entropy)
 				continue
 			}
 		}
 		
 		if r.CheckGlobalStopWord {
 			if ok, word := ContainsStopWord(finding.Secret); ok {
-				logger.Debug("skipping finding: global allowlist stopword", "finding", finding.Secret, "allowed-stopword", word)
+				logger.Debug("skipping finding: global allowlist stopword", "match", finding.Match, "secret", finding.Secret, "allowed-stopword", word)
 				continue
 			}
 		}

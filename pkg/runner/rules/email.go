@@ -14,13 +14,7 @@ func Email() *Rule {
     r := &Rule{
         RuleID:      "Email",
         Description: "Extract Emails.",
-        Regex:       re.MustCompile(`` +
-                        `(?i)` +  // Case-insensitive matching
-                        `([a-zA-Z0-9_\-\.]+` +  // Escaped characters in local part
-                        `[@|%40]` +  // Separator
-                        `[A-Z0-9](?:[A-Z0-9-]*[A-Z0-9])?` +  // Domain name
-                        `\.(?:[A-Z0-9](?:[A-Z0-9-]*[A-Z0-9])?)+)` +  // Top-level domain and subdomains
-                ``),
+        Regex:       re.MustCompile(`(?i)(\b[a-z0-9._-]+(@|%40)[a-z0-9.-]+\.[a-z]{2,})`),
         Entropy:     2.1,
         Keywords:    []string{"@", "%40"},
         CheckGlobalStopWord: false,

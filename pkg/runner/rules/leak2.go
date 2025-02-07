@@ -17,7 +17,7 @@ func Leak2() *Rule {
         RuleID:      "Leak2 » URL:Email:Pass",
         Description: "Extract Email:Pass leaks",
         Regex:       re.MustCompile(`(?i)([a-zA-Z0-9_]+)[: ]{1,3}([a-zA-Z0-9_-]{2,30}:\/\/[^\"'\n]{1,512})\n[ \t]{0,5}(user|username|login|email)[ :]{1,3}([^\n]{3,512})\n[ \t]{0,5}(pass|password|token|secret|senha|pwd)[ :]{1,3}([^\n\r\t]{3,512})`),
-        Entropy:     1.2,
+        Entropy:     0.91,
         SecretGroup: 6,
         Keywords:    []string{"http://", "https://"},
         CheckGlobalStopWord: false,
@@ -75,6 +75,8 @@ func Leak2() *Rule {
             u1 = strings.Replace(u1, "https://https://", "https://", -1)
             u1 = strings.Replace(u1, "http://https://", "https://", -1)
             u1 = strings.Replace(u1, "https://http://", "http://", -1)
+            u1 = strings.Replace(u1, "http://http:", "http://", -1)
+            u1 = strings.Replace(u1, "https://https", "https://", -1)
 
             u, err := url.Parse(u1)
             if err != nil {
