@@ -136,6 +136,8 @@ WARN Execution statistics
 
 ![elk indices](images/elk.jpg "ELK Indices")
 
+![intelx sample](images/intelx_sample.gif "IntelX to ELK")
+
 ## Disclaimer
 
 This tool is intended for educational purpose or for use in environments where you have been given explicit/legal authorization to do so.
