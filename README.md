@@ -142,6 +142,9 @@ Click at the image bellow to watch the video
 
 [![Watch the video](https://github.com/helviojunior/intelparser/raw/refs/heads/main/images/intelx_sample_cover.png)](https://www.youtube.com/watch?v=qwZNj_mNHMI)
 
+## How-to install ELK from scratch
+
+Follows the how-to from external project (called FileCrawler) [Installing Elasticsearch](https://github.com/helviojunior/filecrawler/blob/main/INSTALL_ELK.md)
 
 ## Disclaimer
 
