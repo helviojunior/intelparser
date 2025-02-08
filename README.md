@@ -136,7 +136,10 @@ WARN Execution statistics
 
 ![elk indices](https://github.com/helviojunior/intelparser/blob/main/images/elk.jpg "ELK Indices")
 
-See [how to ingest and parse IntelX files using Elasticsearch](https://github.com/helviojunior/intelparser/blob/main/INTELX_SAMPLE.md)
+See the video bellow using intelparser to parse and ingest IntelX downloaded files to Elastic Search and see it using Kibana
+
+[![Click here to watch the video]](https://www.youtube.com/watch?v=qwZNj_mNHMI)
+
 
 ## Disclaimer
 
