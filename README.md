@@ -134,9 +134,9 @@ WARN Execution statistics
 
 ```
 
-![elk indices](images/elk.jpg "ELK Indices")
+![elk indices](https://github.com/helviojunior/intelparser/blob/main/images/elk.jpg "ELK Indices")
 
-![intelx sample](images/intelx_sample.gif "IntelX to ELK")
+See [how to ingest and parse IntelX files using Elasticsearch](https://github.com/helviojunior/intelparser/blob/main/INTELX_SAMPLE.md)
 
 ## Disclaimer
 
