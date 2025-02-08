@@ -138,7 +138,7 @@ WARN Execution statistics
 
 See the video bellow using intelparser to parse and ingest IntelX downloaded files to Elastic Search and see it using Kibana
 
-Click at the video bellow to watch the video
+Click at the image bellow to watch the video
 
 [![Watch the video](https://github.com/helviojunior/intelparser/raw/refs/heads/main/images/intelx_sample_cover.png)](https://www.youtube.com/watch?v=qwZNj_mNHMI)
 
