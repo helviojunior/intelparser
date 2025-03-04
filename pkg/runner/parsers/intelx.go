@@ -36,6 +36,7 @@ var MustSaveBucketWords = []string{
 var MustSaveNameWords = []string{
 	"passwords.txt",
 	"history.txt",
+	"brute.txt",
 	"autofills",
 }
 
