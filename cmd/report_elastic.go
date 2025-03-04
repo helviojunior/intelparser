@@ -31,8 +31,10 @@ Sync from local SQLite or JSON Lines file formats to Elastic.
 
 A --from-file and --elasticsearch-uri must be specified.`)),
     Example: ascii.Markdown(`
-- intelparser report elastic --from-file intelparser.sqlite3 --elasticsearch-uri http://localhost:9200/intelparser
-- intelparser report elastic --from-file intelparser.jsonl --elasticsearch-uri http://localhost:9200/intelparser`),
+   - intelparser report elastic --elasticsearch-uri http://localhost:9200/intelparser
+   - intelparser report elastic --elasticsearch-uri http://localhost:9200/intelparser --filter sec4us,webapi,hookchain
+   - intelparser report elastic --from-file intelparser.sqlite3 --elasticsearch-uri http://localhost:9200/intelparser
+   - intelparser report elastic --from-file intelparser.jsonl --elasticsearch-uri http://localhost:9200/intelparser`),
     PreRunE: func(cmd *cobra.Command, args []string) error {
         var err error
         if elkCmdFlags.fromFile == "" {

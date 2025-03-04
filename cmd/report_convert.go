@@ -36,9 +36,11 @@ Convert between SQLite and JSON Lines file formats.
 A --from-file and --to-file must be specified. The extension used for the
 specified filenames will be used to determine the conversion direction and
 target.`)),
-    Example: ascii.Markdown(`
-- gowitness report convert --from-file gowitness.sqlite3 --to-file data.jsonl
-- gowitness report convert --from-file gowitness.jsonl --to-file db.sqlite3`),
+    Example: `
+   - intelparser report convert --to-file data.jsonl
+   - intelparser report convert --to-file data.jsonl --filter sec4us,webapi,hookchain
+   - intelparser report convert --from-file intelparser.sqlite3 --to-file data.jsonl
+   - intelparser report convert --from-file intelparser.jsonl --to-file db.sqlite3`,
     PreRunE: func(cmd *cobra.Command, args []string) error {
         var err error
 

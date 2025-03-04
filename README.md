@@ -106,7 +106,7 @@ rm -rf /usr/local/go && tar -C /usr/local -xzf go1.23.5.linux-amd64.tar.gz
 rm -rf /usr/bin/go && ln -s /usr/local/go/bin/go /usr/bin/go
 ```
 
-## Execation with ELK benchmark
+## Execution with ELK benchmark
 
 ```bash
 # Compressed files size
@@ -141,6 +141,10 @@ See the video bellow using intelparser to parse and ingest IntelX downloaded fil
 Click at the image bellow to watch the video
 
 [![Watch the video](https://github.com/helviojunior/intelparser/raw/refs/heads/main/images/intelx_sample_cover.png)](https://www.youtube.com/watch?v=qwZNj_mNHMI)
+
+## Use cases
+
+You can see another [use cases here](https://github.com/helviojunior/intelparser/blob/main/USE_CASES.md)
 
 ## How-to install ELK from scratch
 
