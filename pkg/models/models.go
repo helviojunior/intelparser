@@ -41,7 +41,7 @@ type File struct {
 
 type URL struct {
 	ID       uint `json:"id" gorm:"primarykey"`
-	FileID   uint `json:"file_id"`
+	FileID   uint `json:"file_id" gorm:"index:idx_url"`
 
 	Time        time.Time   `json:"time"`
 
@@ -53,7 +53,7 @@ type URL struct {
 
 type Email struct {
 	ID       uint `json:"id" gorm:"primarykey"`
-	FileID   uint `json:"file_id"`
+	FileID   uint `json:"file_id" gorm:"index:idx_email"`
 
 	Time        time.Time   `json:"time"`
 
@@ -65,7 +65,7 @@ type Email struct {
 
 type Credential struct {
 	ID       uint `json:"id" gorm:"primarykey"`
-	FileID   uint `json:"file_id"`
+	FileID   uint `json:"file_id" gorm:"index:idx_cred"`
 
 	Rule        string      `json:"rule"`
 	Time        time.Time   `json:"time"`
