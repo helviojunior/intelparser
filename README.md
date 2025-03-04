@@ -21,6 +21,24 @@ Available modules/parsers:
 * [x] Elasticsearch.
 * [x] And much more!  
 
+
+## Get Linux last release
+```
+apt install curl jq
+
+url=$(curl -s https://api.github.com/repos/helviojunior/intelparser/releases | jq -r '[ .[] | {id: .id, tag_name: .tag_name, assets: [ .assets[] | select(.name|match("linux-amd64.tar.gz$")) | {name: .name, browser_download_url: .browser_download_url} ]} | select(.assets != []) ] | sort_by(.id) | reverse | first(.[].assets[]) | .browser_download_url')
+
+cd /opt
+rm -rf intelparser-latest.tar.gz intelparser
+wget -nv -O intelparser-latest.tar.gz "$url"
+tar -xzf intelparser-latest.tar.gz
+
+rsync -av intelparser /usr/local/sbin/
+chmod +x /usr/local/sbin/intelparser
+
+intelparser version
+```
+
 # Build
 
 Clone the repository and build the project with Golang:
