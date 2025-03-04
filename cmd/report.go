@@ -9,6 +9,7 @@ import (
     "strings"
     "regexp"
     "strconv"
+    "sync"
 
     "github.com/helviojunior/intelparser/internal/ascii"
     "github.com/helviojunior/intelparser/pkg/database"
@@ -169,6 +170,7 @@ func convertFromDbTo(from string, writer writers.Writer, status *ConvStatus) err
     if err != nil {
         return err
     }
+    wg := sync.WaitGroup{}
 
     var file models.File
     for rows.Next() {
@@ -201,35 +203,49 @@ func convertFromDbTo(from string, writer writers.Writer, status *ConvStatus) err
 
         newResult := file.Clone()
 
-        logger.Debug("Checking credentials...")
-        var c models.Credential
-        for rCred.Next() {
-            conn.ScanRows(rCred, &c)
-            if containsFilterWord(c.UserDomain) || containsFilterWord(c.Url) || containsFilterWord(c.NearText) {
-                newResult.Credentials = append(newResult.Credentials, c)
-                status.Credential++
+        wg.Add(1)
+        go func() {
+            defer wg.Done()
+            logger.Debug("Checking credentials...")
+            var c models.Credential
+            for rCred.Next() {
+                conn.ScanRows(rCred, &c)
+                if containsFilterWord(c.UserDomain) || containsFilterWord(c.Url) || containsFilterWord(c.NearText) {
+                    newResult.Credentials = append(newResult.Credentials, c)
+                    status.Credential++
+                }
             }
-        }
+        }()
 
-        logger.Debug("Checking emails...")
-        var eml models.Email
-        for rEml.Next() {
-            conn.ScanRows(rEml, &eml)
-            if containsFilterWord(eml.Email) || containsFilterWord(eml.NearText) {
-                newResult.Emails = append(newResult.Emails, eml)
-                status.Email++
+        wg.Add(1)
+        go func() {
+            defer wg.Done()
+            logger.Debug("Checking emails...")
+            var eml models.Email
+            for rEml.Next() {
+                conn.ScanRows(rEml, &eml)
+                if containsFilterWord(eml.Email) || containsFilterWord(eml.NearText) {
+                    newResult.Emails = append(newResult.Emails, eml)
+                    status.Email++
+                }
             }
-        }
+        }()
 
-        logger.Debug("Checking urls...")
-        var u models.URL
-        for rUrl.Next() {
-            conn.ScanRows(rUrl, &u)
-            if containsFilterWord(u.Url) || containsFilterWord(u.NearText) {
-                newResult.URLs = append(newResult.URLs, u)
-                status.Url++
+        wg.Add(1)
+        go func() {
+            defer wg.Done()
+            logger.Debug("Checking urls...")
+            var u models.URL
+            for rUrl.Next() {
+                conn.ScanRows(rUrl, &u)
+                if containsFilterWord(u.Url) || containsFilterWord(u.NearText) {
+                    newResult.URLs = append(newResult.URLs, u)
+                    status.Url++
+                }
             }
-        }
+        }()
+
+        wg.Wait()
 
         if containsFilterWord(newResult.Content) || len(newResult.Credentials) != 0 || len(newResult.Emails) != 0 || len(newResult.URLs) != 0 {
             logger.Debug("Converting file!")
