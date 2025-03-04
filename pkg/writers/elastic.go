@@ -22,7 +22,7 @@ import (
 )
 
 // fields in the main model to ignore
-var elkExludedFields = []string{"failed", "failed_reason", "next_text"}
+var elkExludedFields = []string{"failed", "failed_reason", "near_text"}
 var elkBulkCount = 1000
 var elkBulkMaxSize = 5 * 1024 * 1024
 

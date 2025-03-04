@@ -6,6 +6,7 @@ import (
 	"os/user"
 	"os"
 	"fmt"
+	"time"
 
 	"github.com/helviojunior/intelparser/internal/ascii"
 	"github.com/helviojunior/intelparser/pkg/log"
@@ -17,12 +18,15 @@ var (
 	opts = &runner.Options{}
 )
 
+var startTime time.Time
 var rootCmd = &cobra.Command{
 	Use:   "intelparser",
-	Short: "intelparser is a modular password sprayer",
+	Short: "intelparser is a modular Intel/Leaks parser",
 	Long:  ascii.Logo(),
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-		
+
+        startTime = time.Now()
+
 		usr, err := user.Current()
 	    if err != nil {
 	       return err

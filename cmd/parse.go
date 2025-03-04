@@ -2,7 +2,6 @@ package cmd
 
 import (
     "os"
-    "time"
 
     "github.com/helviojunior/intelparser/internal/ascii"
     "github.com/helviojunior/intelparser/internal/islazy"
@@ -18,7 +17,6 @@ import (
 var scanWriters = []writers.Writer{}
 var scanRunner *runner.Runner
 var tempFolder string
-var startTime time.Time
 
 var parserCmd = &cobra.Command{
     Use:   "parse",
@@ -34,8 +32,6 @@ var parserCmd = &cobra.Command{
 `,
     PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
         var err error
-
-        startTime = time.Now()
 
         // Annoying quirk, but because I'm overriding PersistentPreRun
         // here which overrides the parent it seems.

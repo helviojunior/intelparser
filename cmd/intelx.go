@@ -164,7 +164,6 @@ Parse IntelX downloaded files (ZIP or folder).
         status := scanRunner.Run()
         scanRunner.Close()
 
-
         diff := time.Now().Sub(startTime)
         out := time.Time{}.Add(diff)
 

@@ -11,7 +11,7 @@ import (
 )
 
 // fields in the main model to ignore
-var csvExludedFields = []string{"next_text"}
+var csvExludedFields = []string{"near_text"}
 
 // CsvWriter writes CSV files
 type CsvWriter struct {

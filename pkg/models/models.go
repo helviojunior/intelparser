@@ -48,7 +48,7 @@ type URL struct {
 	Domain		string      `json:"domain"`
 	Url         string      `json:"url"`
 
-	NearText    string 		`json:"next_text"`
+	NearText    string 		`json:"near_text"`
 }
 
 type Email struct {
@@ -60,7 +60,7 @@ type Email struct {
 	Domain		string      `json:"domain"`
 	Email       string      `json:"email"`
 
-	NearText    string 		`json:"next_text"`
+	NearText    string 		`json:"near_text"`
 }
 
 type Credential struct {
@@ -80,7 +80,7 @@ type Credential struct {
 	Severity    int 	    `json:"severity"`
 	Entropy     float32     `json:"entropy"`
 
-	NearText    string 		`json:"next_text"`
+	NearText    string 		`json:"near_text"`
 }
 
 // Finding contains information about strings that
@@ -123,6 +123,29 @@ type Finding struct {
     Credential Credential
     Email Email
     Url URL
+}
+
+
+func (file File) Clone() *File {
+	return &File{
+		Provider			: file.Provider,
+		FilePath 			: file.FilePath,
+		FileName 			: file.FileName,
+		Name 				: file.Name,
+		Date 				: file.Date,
+		Bucket 				: file.Bucket,
+		MediaType 			: file.MediaType,
+		IndexedAt 			: file.IndexedAt,
+		Size 				: file.Size,
+		ProviderId 			: file.ProviderId,
+		MIMEType 			: file.MIMEType,
+		Fingerprint 		: file.Fingerprint,
+		Content 			: file.Content,
+
+		//Credentials 		: make([]Credential{}),
+		//Emails 				: make([]Email{}),
+		//URLs 				: make([]URL{}),
+	}
 }
 
 /* Custom Marshaller for File */
