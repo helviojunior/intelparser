@@ -23,6 +23,7 @@ type Logging struct {
 // Writer options
 type Writer struct {
     UserPath  string
+    WorkingPath  string
     NoControlDb bool
     GlobalDbURI string
     Db        bool
