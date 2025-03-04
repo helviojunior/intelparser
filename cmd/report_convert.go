@@ -8,6 +8,7 @@ import (
     "time"
     "path/filepath"
     "strings"
+    "os"
 
     "github.com/helviojunior/intelparser/internal/ascii"
     "github.com/helviojunior/intelparser/internal/islazy"
@@ -131,10 +132,15 @@ target.`)),
             }
 
             running = false
-            time.Sleep(time.Duration(time.Second/4))
+            time.Sleep(time.Second)
         }()
 
         wg.Wait()
+        
+        fmt.Fprintf(os.Stderr, "%s\n%s\r\033[A", 
+            "                                                                                ",
+            "                                                                                ",
+        )
 
         diff := time.Now().Sub(startTime)
         out := time.Time{}.Add(diff)
@@ -146,7 +152,7 @@ target.`)),
         st += "     -> URLs.............: %s\n"
         st += "     -> E-mails..........: %s\n"
 
-        log.Info(st, 
+        log.Infof(st, 
             out.Format("15:04:05"),
             islazy.FormatIntComma(status.Converted), 
             islazy.FormatIntComma(status.Credential),

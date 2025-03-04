@@ -113,7 +113,7 @@ A --from-file and --elasticsearch-uri must be specified.`)),
         st += "     -> URLs.............: %s\n"
         st += "     -> E-mails..........: %s\n"
 
-        log.Info(st, 
+        log.Infof(st, 
             out.Format("15:04:05"),
             islazy.FormatIntComma(status.Converted), 
             islazy.FormatIntComma(status.Credential),
