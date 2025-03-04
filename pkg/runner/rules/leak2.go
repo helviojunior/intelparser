@@ -37,7 +37,7 @@ func Leak2() *Rule {
                 v := strings.Trim(s1[1], " \r\n\t")
 
                 switch k {
-                case "url":
+                case "url", "host":
                 u1 = v
 
                 case "user", "username", "login", "email":
