@@ -335,9 +335,12 @@ func ResolveFullPath(file_path string) (string, error) {
 		return file_path, nil
 	}
 
-	file_path = filepath.Join(currentPath, file_path)
-	if !IsValid(file_path) {
-		return "", errors.New("File path '"+ file_path + "' is not a valid path") 
+	file_name := filepath.Base(file_path)
+	if file_name == file_path {
+		file_path = filepath.Join(currentPath, file_path)
+		if !IsValid(file_path) {
+			return "", errors.New("File path '"+ file_path + "' is not a valid path") 
+		}
 	}
 
 	return file_path, nil
