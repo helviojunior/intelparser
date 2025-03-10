@@ -8,6 +8,7 @@ import (
 	//"github.com/helviojunior/intelparser/pkg/log"
 	"github.com/helviojunior/intelparser/pkg/models"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 var hammingThreshold = 10
@@ -39,5 +40,9 @@ func NewDbWriter(uri string, debug bool) (*DbWriter, error) {
 func (dw *DbWriter) Write(result *models.File) error {
 	dw.mutex.Lock()
 	defer dw.mutex.Unlock()
+
+	if _, ok := dw.conn.Statement.Clauses["ON CONFLICT"]; !ok {
+		dw.conn = dw.conn.Clauses(clause.OnConflict{UpdateAll: true})
+	}
 	return dw.conn.CreateInBatches(result, 50).Error
 }
