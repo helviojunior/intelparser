@@ -151,6 +151,9 @@ func prepareSQL(fields []string) string {
             sql += " " + f + " like '%"+ w + "%' "
         }
     }
+    if sql != "" {
+        sql = " and (" + sql + ")"
+    }
     return sql
 }
 
@@ -180,21 +183,21 @@ func convertFromDbTo(from string, writer writers.Writer, status *ConvStatus) err
 
         sql1 := "file_id == " + strconv.FormatUint(uint64(file.ID), 10)
 
-        sqlCred := sql1 + " and (" + prepareSQL([]string{"username", "url", "password", "near_text"}) + ")"
+        sqlCred := sql1 + prepareSQL([]string{"username", "url", "password", "near_text"})
         rCred, err := conn.Model(&models.Credential{}).Where(sqlCred).Rows()
         defer rCred.Close()
         if err != nil {
             return err
         }
 
-        sqlEmail := sql1 + " and (" + prepareSQL([]string{"email", "near_text"}) + ")"
+        sqlEmail := sql1 + prepareSQL([]string{"email", "near_text"})
         rEml, err := conn.Model(&models.Email{}).Where(sqlEmail).Rows()
         defer rEml.Close()
         if err != nil {
             return err
         }
 
-        sqlUrl := sql1 + " and (" + prepareSQL([]string{"url", "near_text"}) + ")"
+        sqlUrl := sql1 + prepareSQL([]string{"url", "near_text"})
         rUrl, err := conn.Model(&models.URL{}).Where(sqlUrl).Rows()
         defer rUrl.Close()
         if err != nil {
