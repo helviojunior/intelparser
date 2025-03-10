@@ -141,8 +141,17 @@ function Invoke-DownloadIntelParser {
     }
 
     try {
-        $dwnPath = (New-Object -ComObject Shell.Application).NameSpace('shell:Downloads').Self.Path
-        $name = Join-Path -Path $dwnPath -ChildPath $exeFilename
+        $dstPath = (New-Object -ComObject Shell.Application).NameSpace('shell:Downloads').Self.Path
+    } catch {
+        $dstPath = switch ($platform) {
+            "windows" { "~\Downloads\" }
+            "linux"   { "/usr/local/sbin/" }
+            "darwin"  { "/usr/local/sbin/" } 
+        }
+    }
+
+    try {
+        $name = Join-Path -Path $dstPath -ChildPath $exeFilename
 
         # Cleaning up target dir
         Remove-Item $name -Recurse -Force -ErrorAction SilentlyContinue 
