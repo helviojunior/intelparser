@@ -1,8 +1,14 @@
 package ascii
 
+import (
+	"fmt"
+	"strings"
+	"github.com/helviojunior/intelparser/internal/version"
+)
+
 // Logo returns the intelparser ascii logo
 func Logo() string {
-	return `                   
+	txt := `                   
                                                      
   _____       _       _ _____                         
  |_   _|     | |     | |  __ \                        
@@ -10,12 +16,14 @@ func Logo() string {
    | | | '_ \| __/ _ \ |  ___/ _' | '__/ __|/ _ \ '__|
   _| |_| | | | ||  __/ | |  | (_| | |  \__ \  __/ |   
  |_____|_| |_|\__\___|_|_|   \__,_|_|  |___/\___|_|   
-                                                      
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   
 `
+	v := fmt.Sprintf("Version: %s", version.Version)
+	txt += strings.Repeat(" ", 51 - len(v))
+	txt += v
+	return fmt.Sprintln(txt)
 }
 
 // LogoHelp returns the logo, with help
 func LogoHelp(s string) string {
-	return Logo() + "\n\n" + s
+	return fmt.Sprintln(Logo()) + s
 }

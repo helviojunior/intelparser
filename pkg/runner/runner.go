@@ -256,7 +256,7 @@ func (run *Runner) Run() Status {
                     file_name := filepath.Base(file_path)
 					logger := run.log.With("file", file_name)
 					
-                    logger.Info("Indexing")
+                    logger.Debug("Indexing")
 
 					file, err := run.Parser.ParseFile(run, file_path)
 					if err != nil {

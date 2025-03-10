@@ -161,6 +161,7 @@ Parse IntelX downloaded files (ZIP or folder).
 
         }()
 
+        log.Info("Starting InteX parser")
         status := scanRunner.Run()
         scanRunner.Close()
 
