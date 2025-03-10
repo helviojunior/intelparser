@@ -125,6 +125,12 @@ func (run *IntelxParser) ParseFile(thisRunner *runner.Runner, file_path string) 
 
 	idx := slices.IndexFunc(run.info, func(i InfoData) bool { return i.SystemID == file_name })
 	logger.Debug("Get info", "info_idx", idx)
+
+	if idx == 0 {
+		logger.Debug("File is not present at info.csv, ignoring...")
+	    return nil, nil
+	}
+
 	if idx >= 0 {
 		info := run.info[idx]
 		result.Name = info.Name
