@@ -53,13 +53,11 @@ intelparser version
 Just run the following powershell script
 
 ```
- # Download latest helviojunior/intelparser release from github
-
+# Download latest helviojunior/intelparser release from github
 function Invoke-DownloadIntelParser {
 
     $repo = "helviojunior/intelparser"
-    $file = "intelparser-latest.zip"
-
+    
     # Determine OS and Architecture
     $osPlatform = [System.Runtime.InteropServices.RuntimeInformation]::OSDescription
     $architecture = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
@@ -103,25 +101,60 @@ function Invoke-DownloadIntelParser {
         Return
     }
 
+    $tmpPath = $Env:Temp
+    if ($tmpPath -eq $null -or $tmpPath -eq "") {
+        $tmpPath = $Env:TMPDIR
+    }
+    if ($tmpPath -eq $null -or $tmpPath -eq "") {
+        $tmpPath = switch ($platform) {
+            "windows" { "c:\windows\temp\" }
+            "linux"   { "/tmp" }
+            "darwin"  { "/tmp" }
+        }
+    }
+
+    $extension = switch ($platform) {
+        "windows" { ".zip" }
+        "linux"   { ".tar.gz" }
+        "darwin"  { ".tar.gz" } # MacOS is identified as Darwin
+        Default     { "unknown" }
+    }
+
+    $file = "intelparser-latest$extension"
+
     Write-Host Dowloading latest release
-    $zip = Join-Path -Path $ENV:Temp -ChildPath $file
+    $zip = Join-Path -Path $tmpPath -ChildPath $file
     Remove-Item $zip -Force -ErrorAction SilentlyContinue 
     Invoke-WebRequest $asset.browser_download_url -Out $zip
 
     Write-Host Extracting release files
-    Expand-Archive $zip -Force -DestinationPath $ENV:Temp
+    if ($extension -eq ".zip") {
+        Expand-Archive $zip -Force -DestinationPath $tmpPath
+    }else{
+        . tar -xzf "$zip" -C "$tmpPath"
+    }
 
-    $dwnPath = (New-Object -ComObject Shell.Application).NameSpace('shell:Downloads').Self.Path
-    $name = Join-Path -Path $dwnPath -ChildPath "intelparser.exe"
+    $exeFilename = switch ($platform) {
+        "windows" { "intelparser.exe" }
+        "linux"   { "intelparser" }
+        "darwin"  { "intelparser" } 
+    }
 
-    # Cleaning up target dir
-    Remove-Item $name -Recurse -Force -ErrorAction SilentlyContinue 
+    try {
+        $dwnPath = (New-Object -ComObject Shell.Application).NameSpace('shell:Downloads').Self.Path
+        $name = Join-Path -Path $dwnPath -ChildPath $exeFilename
 
-    # Moving from temp dir to target dir
-    Move-Item $(Join-Path -Path $ENV:Temp -ChildPath "intelparser.exe") -Destination $name -Force
+        # Cleaning up target dir
+        Remove-Item $name -Recurse -Force -ErrorAction SilentlyContinue 
 
-    # Removing temp files
-    Remove-Item $zip -Force
+        # Moving from temp dir to target dir
+        Move-Item $(Join-Path -Path $tmpPath -ChildPath $exeFilename) -Destination $name -Force
+
+        # Removing temp files
+        Remove-Item $zip -Force
+    } catch {
+        $name = Join-Path -Path $tmpPath -ChildPath $exeFilename
+    }
     
     Write-Host "Intel Parser saved at $name" -ForegroundColor DarkYellow
 
@@ -147,10 +180,10 @@ Function Get-AssetData {
     
     if (Get-Member -inputobject $Release -name "assets" -Membertype Properties) {
         
-        $extension = switch -Wildcard ($OSPlatform) {
-            "*Windows*" { ".zip" }
-            "*Linux*"   { "tar.gz" }
-            "*Darwin*"  { "tar.gz" } # MacOS is identified as Darwin
+        $extension = switch ($OSPlatform) {
+            "windows" { ".zip" }
+            "linux"   { ".tar.gz" }
+            "darwin"  { ".tar.gz" } # MacOS is identified as Darwin
             Default     { "unknown" }
         }
 
