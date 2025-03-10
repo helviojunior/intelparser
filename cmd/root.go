@@ -34,7 +34,9 @@ var rootCmd = &cobra.Command{
 
 	    opts.Writer.UserPath = usr.HomeDir
 
-		fmt.Println(ascii.Logo())
+	    if cmd.CalledAs() != "version" {
+			fmt.Println(ascii.Logo())
+		}
 
 		if opts.Logging.Silence {
 			log.EnableSilence()
