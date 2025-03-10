@@ -39,6 +39,9 @@ chmod +x /usr/local/sbin/intelparser
 intelparser version
 ```
 
+You can see other Operational Systems procedures here [INSTALL.md](https://github.com/helviojunior/intelparser/blob/main/INSTALL.md)
+
+
 # Build
 
 Clone the repository and build the project with Golang:
