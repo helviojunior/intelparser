@@ -17,7 +17,7 @@ func Logo() string {
   _| |_| | | | ||  __/ | |  | (_| | |  \__ \  __/ |   
  |_____|_| |_|\__\___|_|_|   \__,_|_|  |___/\___|_|   
 `
-	v := fmt.Sprintf("Version: %s", version.Version)
+	v := fmt.Sprintf("Version: %s.%s", version.Version, version.GitHash)
 	txt += strings.Repeat(" ", 51 - len(v))
 	txt += v
 	return fmt.Sprintln(txt)
