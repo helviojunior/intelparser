@@ -38,13 +38,13 @@ func AddZipFile(temp_folder string, file_path string) error {
         return err
     }
 
-    err = AddFolder(temp_folder, dst);
+    err = AddFolder(temp_folder, dst, file_path);
 
     return err
 
 }
 
-func AddFolder(temp_folder string, folder_path string) error {
+func AddFolder(temp_folder string, folder_path string, zip_source string) error {
     //scanRunner.Files <- intelxCmdOptions.Path
 
     entries, err := os.ReadDir(folder_path)
@@ -55,6 +55,13 @@ func AddFolder(temp_folder string, folder_path string) error {
     info := filepath.Join(folder_path, "Info.csv")
     if !islazy.FileExists(info) {
         return errors.New("File 'Info.csv' not found") 
+    }
+
+    if zip_source == "" {
+        log.Info("Parsing files in folder", "folder", folder_path)
+    }else {
+        file_name := filepath.Base(zip_source)
+        log.Info("Parsing ZIP file ", "file", file_name)
     }
 
     if err := scanRunner.ParsePositionalFile(info); err != nil {
@@ -140,7 +147,7 @@ Parse IntelX downloaded files (ZIP or folder).
                 info := filepath.Join(intelxCmdOptions.Path, "Info.csv")
                 if islazy.FileExists(info) {
                     
-                    if err = AddFolder(tempFolder, intelxCmdOptions.Path); err != nil {
+                    if err = AddFolder(tempFolder, intelxCmdOptions.Path, ""); err != nil {
                         log.Error("error", "err", err)
                     }
 
