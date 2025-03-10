@@ -53,20 +53,53 @@ intelparser version
 Just run the following powershell script
 
 ```
-# Download latest helviojunior/intelparser release from github
+ # Download latest helviojunior/intelparser release from github
 
 function Invoke-DownloadIntelParser {
 
     $repo = "helviojunior/intelparser"
     $file = "intelparser-latest.zip"
 
+    # Determine OS and Architecture
+    $osPlatform = [System.Runtime.InteropServices.RuntimeInformation]::OSDescription
+    $architecture = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
+
+    if ($architecture -eq $null -or $architecture -eq "") {
+        $architecture = $Env:PROCESSOR_ARCHITECTURE
+    }
+        
+    if ($osPlatform -eq $null -or $osPlatform -eq "") {
+        $osPlatform = $Env:OS
+    }
+
+    # Adjust the platform and architecture for the API call
+    $platform = switch -Wildcard ($osPlatform) {
+        "*Windows*" { "windows" }
+        "*Linux*"   { "linux" }
+        "*Darwin*"  { "darwin" } # MacOS is identified as Darwin
+        Default     { "unknown" }
+    }
+    $arch = switch ($architecture) {
+        "X64"  { "amd64" }
+        "AMD64"  { "amd64" }
+        "X86"  { "386" }
+        "Arm"  { "arm" }
+        "Arm64" { "arm64" }
+        Default { "unknown" }
+    }
+
+    if ($platform -eq "unknown" -or $arch -eq "unknown") {
+        Write-Error "Cannot get OS Platform and Architecture"
+        Return
+    }
+
     Write-Host Getting release list
     $releases = "https://api.github.com/repos/$repo/releases"
 
-    $asset = Invoke-WebRequest $releases | ConvertFrom-Json | Sort-Object -Descending -Property "Id" | ForEach-Object -Process { Get-AssetData -release $_ } | Select-Object -First 1
+    $asset = Invoke-WebRequest $releases | ConvertFrom-Json | Sort-Object -Descending -Property "Id" | ForEach-Object -Process { Get-AssetData -Release $_ -OSPlatform $platform -OSArchitecture $arch } | Select-Object -First 1
 
     if ($asset -eq $null -or $asset.browser_download_url -eq $null){
-        Write-Error " Cannot find a valid URL"
+        Write-Error "Cannot find a valid URL"
         Return
     }
 
@@ -100,8 +133,12 @@ Function Get-AssetData {
     [CmdletBinding(SupportsShouldProcess = $False)]
     [OutputType([object])]
     Param (
-        [Parameter(Mandatory = $True, Position = 0, ParameterSetName='Release')]
-        [object]$Release
+        [Parameter(Mandatory = $True, Position = 0)]
+        [object]$Release,
+        [Parameter(Mandatory = $True, Position = 1)]
+        [string]$OSPlatform,
+        [Parameter(Mandatory = $True, Position = 2)]
+        [string]$OSArchitecture
     )
 
     if($Release -is [system.array]){
@@ -109,39 +146,8 @@ Function Get-AssetData {
     }
     
     if (Get-Member -inputobject $Release -name "assets" -Membertype Properties) {
-        # Determine OS and Architecture
-        $osPlatform = [System.Runtime.InteropServices.RuntimeInformation]::OSDescription
-        $architecture = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
-
-        if ($architecture -eq $null -or $architecture -eq "") {
-            $architecture = $Env:PROCESSOR_ARCHITECTURE
-        }
         
-        if ($osPlatform -eq $null -or $osPlatform -eq "") {
-            $osPlatform = $Env:OS
-        }
-
-        # Adjust the platform and architecture for the API call
-        $platform = switch -Wildcard ($osPlatform) {
-            "*Windows*" { "windows" }
-            "*Linux*"   { "linux" }
-            "*Darwin*"  { "darwin" } # MacOS is identified as Darwin
-            Default     { "unknown" }
-        }
-        $arch = switch ($architecture) {
-            "X64"  { "amd64" }
-            "AMD64"  { "amd64" }
-            "X86"  { "386" }
-            "Arm"  { "arm" }
-            "Arm64" { "arm64" }
-            Default { "unknown" }
-        }
-
-        if ($platform -eq "unknown" -or $arch -eq "unknown") {
-            Return $null
-        }
-
-        $extension = switch -Wildcard ($osPlatform) {
+        $extension = switch -Wildcard ($OSPlatform) {
             "*Windows*" { ".zip" }
             "*Linux*"   { "tar.gz" }
             "*Darwin*"  { "tar.gz" } # MacOS is identified as Darwin
@@ -157,5 +163,6 @@ Function Get-AssetData {
     Return $null
 } 
 
-Invoke-DownloadIntelParser 
+Invoke-DownloadIntelParser  
+
 ```
