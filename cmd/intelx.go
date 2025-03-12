@@ -7,9 +7,11 @@ import (
     //"fmt"
     "os"
     "time"
+    "strings"
 
     "github.com/helviojunior/intelparser/internal/ascii"
     "github.com/helviojunior/intelparser/internal/islazy"
+    "github.com/helviojunior/intelparser/internal/disk"
     "github.com/helviojunior/intelparser/pkg/log"
     "github.com/helviojunior/intelparser/pkg/runner"
     //"github.com/helviojunior/intelparser/pkg/database"
@@ -24,23 +26,31 @@ func AddZipFile(temp_folder string, file_path string) error {
     var mime string
     var dst string
     var err error
+    file_name := filepath.Base(file_path)
+    logger := log.With("file", file_name)
 
+    logger.Debug("Checking file")
     if mime, err = islazy.GetMimeType(file_path); err != nil {
+        logger.Debug("Error getting mime type", "err", err)
         return err
     }
 
+    logger.Debug("Mime type", "mime", mime)
     if mime != "application/zip" {
         return errors.New("invalid file type")
     }
 
-    dst, err = islazy.CreateDirFromFilename(temp_folder, file_path)
-    if err = islazy.Unzip(file_path, dst); err != nil {
+    if dst, err = islazy.CreateDirFromFilename(temp_folder, file_path); err != nil {
+        logger.Debug("Error creating temp folder to extract zip file", "err", err)
         return err
     }
 
-    err = AddFolder(temp_folder, dst, file_path);
+    if err = islazy.Unzip(file_path, dst); err != nil {
+        logger.Debug("Error extracting zip file", "temp_folder", dst, "err", err)
+        return err
+    }
 
-    return err
+    return AddFolder(temp_folder, dst, file_path);
 
 }
 
@@ -52,6 +62,7 @@ func AddFolder(temp_folder string, folder_path string, zip_source string) error 
         return err
     }
  
+    log.Debug("Checking folder", "path", folder_path)
     info := filepath.Join(folder_path, "Info.csv")
     if !islazy.FileExists(info) {
         return errors.New("File 'Info.csv' not found") 
@@ -104,6 +115,11 @@ Parse IntelX downloaded files (ZIP or folder).
             return errors.New("ZIP file or path is not readable")
         }
 
+        intelxCmdOptions.Path, err = islazy.ResolveFullPath(intelxCmdOptions.Path)
+        if err != nil {
+            return err
+        }
+
         // An slog-capable logger to use with drivers and runners
         logger := slog.New(log.Logger)
 
@@ -132,6 +148,12 @@ Parse IntelX downloaded files (ZIP or folder).
 
         log.Debug("starting parsing scanning", "path", intelxCmdOptions.Path, "type", ft)
 
+        di, err := disk.GetInfo(tempFolder, false)
+        if err != nil {
+            log.Error("Error getting disk stats", "path", tempFolder, "err", err)
+            os.Exit(2)
+        }
+
         go func() {
             defer close(scanRunner.Files)
 
@@ -155,12 +177,31 @@ Parse IntelX downloaded files (ZIP or folder).
 
                     entries, err := os.ReadDir(intelxCmdOptions.Path)
                     if err != nil {
-                        log.Error("error listting directory files", "err", err)
+                        log.Error("Rrror listting directory files", "err", err)
                         os.Exit(2)
                     }
 
                     for _, e := range entries {
-                        AddZipFile(tempFolder, filepath.Join(intelxCmdOptions.Path, e.Name()))
+                        if strings.ToLower(filepath.Ext(e.Name())) != ".zip" {
+                            log.Debug("Ignoring non ZIP file", "file", e.Name())
+                            continue
+                        }
+
+                        fst, err := os.Stat(filepath.Join(intelxCmdOptions.Path, e.Name()))
+                        if err != nil {
+                            log.Error("Error getting file stats", "file", e.Name(), "err", err)
+                            os.Exit(2)
+                        }
+
+                        if di.Free <= uint64(5 * fst.Size()) {
+                            log.Error("No space left on temp path", "temp_path", tempFolder)
+                            os.Exit(2)
+                        }
+
+                        err = AddZipFile(tempFolder, filepath.Join(intelxCmdOptions.Path, e.Name()))
+                        if err != nil {
+                            log.Debug("Error checking ZIP file", "file", e.Name(), "err", err)
+                        }
                     }
                 }
 

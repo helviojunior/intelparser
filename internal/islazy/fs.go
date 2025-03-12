@@ -16,9 +16,10 @@ import (
     "math/rand"
     "os/user"
     "io/ioutil"
-
 	"archive/zip"
     
+    "github.com/helviojunior/intelparser/pkg/log"
+    "github.com/helviojunior/intelparser/internal/disk"
 )
 
 func GetMimeType(s string) (string, error) {
@@ -131,6 +132,24 @@ func TempFileName(base_path, prefix, suffix string) string {
 
     if base_path == "" {
     	base_path = os.TempDir()
+
+    	di, err := disk.GetInfo(base_path, false)
+    	if err != nil {
+    		log.Debug("Error getting disk stats", "path", base_path, "err", err)
+    	}
+        if err == nil {
+        	log.Debug("Free disk space", "path", base_path, "free", di.Free)
+            if di.Free <= (5 * 1024 * 1024 * 1024) { // Less than 5GB
+            	currentPath, err := os.Getwd()
+            	if err != nil {
+		    		log.Debug("Error getting working directory", "err", err)
+		    	}
+			    if err == nil {
+			       base_path = currentPath
+			    }
+			    log.Debug("Free disk <= 5Gb, changing temp path location", "temp_path", base_path)
+            }
+        }
     }
     return filepath.Join(base_path, prefix+hex.EncodeToString(randBytes)+suffix)
 }
