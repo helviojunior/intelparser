@@ -28,10 +28,21 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goos: [linux, windows, darwin]
+        goarch: ["386", amd64, arm64]
+        exclude:
+          - goarch: "386"
+            goos: darwin
+          - goarch: arm64
+            goos: windows
 
     steps:
-      - name: Checkout Repository
+      - name: Checkout code
         uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
 
       - name: Set up Go
         uses: actions/setup-go@v4
@@ -42,13 +53,39 @@ jobs:
         run: |
           sudo apt update
           sudo apt install -y \
-            ca-certificates chromium chromium-driver jq curl
-
-      - name: Install intelparser at specific commit
+            ca-certificates jq curl gcc-multilib gcc-mingw-w64
+      
+      - name: Get OS and arch info
+        id: vars
         run: |
-          go install github.com/helviojunior/intelparser@${GITHUB_SHA}
+          VER=$(curl -s https://api.github.com/repos/helviojunior/intelparser/releases/latest | jq -r '.tag_name' | grep -oE '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' || echo '0.0.0')
+          GITHASH=$(git rev-parse --short HEAD)
+          BUILDENV=$(go version | cut -d' ' -f 3,4 | sed 's/ /_/g')
+          BUILDTIME=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+          LDFLAGS="-s -w \
+            -X=github.com/helviojunior/intelparser/internal/version.Version=$VER \
+            -X=github.com/helviojunior/intelparser/internal/version.GitHash=$GITHASH \
+            -X=github.com/helviojunior/intelparser/internal/version.GoBuildEnv=$BUILDENV \
+            -X=github.com/helviojunior/intelparser/internal/version.GoBuildTime=$BUILDTIME"
 
-      - name: Verify Installation
+          EXT=$(if [[ "${{ matrix.goos }}" == "windows" ]]; then echo ".exe"; fi)
+          FILENAME="intelparser-test-v${VER}-${{ matrix.goos }}-${{ matrix.goarch }}${EXT}"
+
+          echo "LDFLAGS=$LDFLAGS" >> $GITHUB_OUTPUT
+          echo "VER=$VER" >> $GITHUB_OUTPUT
+          echo "FILENAME=$FILENAME" >> $GITHUB_OUTPUT
+
+      - name: Install dependencies
+        run: go get .
+
+      - name: Build
         run: |
-          intelparser parse -h
-          intelparser version
+          mkdir ./build
+          env GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -o ./build/${{ steps.vars.outputs.FILENAME }} .
+
+      - name: Upload Go build results
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.vars.outputs.FILENAME }}
+          path: ./build/${{ steps.vars.outputs.FILENAME }}
+          retention-days: 3
