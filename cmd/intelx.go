@@ -72,7 +72,7 @@ func AddFolder(temp_folder string, folder_path string, zip_source string) error 
         log.Info("Parsing files in folder", "folder", folder_path)
     }else {
         file_name := filepath.Base(zip_source)
-        log.Info("Parsing ZIP file ", "file", file_name)
+        log.Info("Parsing ZIP file", "file", file_name)
     }
 
     if err := scanRunner.ParsePositionalFile(info); err != nil {
