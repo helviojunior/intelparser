@@ -51,6 +51,8 @@ func Leak2() *Rule {
             if strings.Contains(u2, "@") {
 
                 e1 := strings.ToLower(strings.Replace(strings.Trim(u2, ". "), "%40", "@", -1))
+                e1 = strings.Replace(e1, ".@", "@", -1)
+                e1 = strings.Replace(e1, "@.", "@", -1)
                 if m, err = mail.ParseAddress(e1); err != nil {
                     return false, err
                 }

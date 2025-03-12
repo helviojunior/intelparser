@@ -23,7 +23,10 @@ func Email() *Rule {
             var err error
 
             e1 := strings.Trim(finding.Secret, ". ")
-            if m, err = mail.ParseAddress(strings.Replace(e1, "%40", "@", -1)); err != nil {
+            e1 = strings.Replace(e1, "%40", "@", -1)
+            e1 = strings.Replace(e1, ".@", "@", -1)
+            e1 = strings.Replace(e1, "@.", "@", -1)
+            if m, err = mail.ParseAddress(e1); err != nil {
                 return false, err
             }
 
