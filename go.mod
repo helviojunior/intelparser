@@ -9,6 +9,8 @@ require (
 	github.com/charmbracelet/log v0.4.0
 	github.com/elastic/go-elasticsearch/v8 v8.17.0
 	github.com/glebarez/sqlite v1.11.0
+	github.com/go-dedup/simhash v0.0.0-20170904020510-9ecaca7b509c
+	github.com/gofrs/uuid v4.4.0+incompatible
 	github.com/h2non/filetype v1.1.3
 	github.com/prometheus/procfs v0.15.1
 	github.com/spf13/cobra v1.8.1
@@ -29,6 +31,8 @@ require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/elastic/elastic-transport-go/v8 v8.6.0 // indirect
 	github.com/glebarez/go-sqlite v1.22.0 // indirect
+	github.com/go-dedup/megophone v0.0.0-20170830025436-f01be21026f5 // indirect
+	github.com/go-dedup/text v0.0.0-20170907015346-8bb1b95e3cb7 // indirect
 	github.com/go-logfmt/logfmt v0.6.0 // indirect
 	github.com/go-logr/logr v1.4.2 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
