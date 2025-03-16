@@ -130,6 +130,9 @@ rm -rf /usr/bin/go && ln -s /usr/local/go/bin/go /usr/bin/go
 ## Execution with ELK benchmark
 
 ```bash
+#Download IntelX files
+$ intelparser download intelx --term sec4us.com.br
+
 # Compressed files size
 $ du -skh ~/Leaks_zip/
 1.8G  ~/Leaks_zip/

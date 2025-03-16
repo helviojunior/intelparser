@@ -1,5 +1,11 @@
 # IntelParser Use Cases
 
+## Search and Download IntelX data
+
+```
+$ intelparser download intelx --term sec4us.com.br
+```
+
 ## Use case 1
 
 Parsing downloaded IntelX file and save filtered data into SQLite Database
@@ -11,7 +17,7 @@ I used this path when I need to send to the client only his own leaked credentia
 *Note:* Remember that by default the IntelParser save all data into `~/.intelparser.db` if you want to save the data into another path SQLite database use the parameters `--write-db` and `--write-db-uri` 
 
 ```
-$ intelparser parse intelx -p ~/Downloads/Search\ 2025-03-04\ 21_29_58.zip
+$ intelparser parse intelx -p ~/Downloads/ix_sec4us.com.br_2025-16-03_17-17-40.zip
 
 Indexing file=02683b43-5ef6-43e9-9ccd-96f265d7537d.txt
 INFO Indexing file=04ce4dbc-7e50-4f16-a5c2-d1352dc11183.txt

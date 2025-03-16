@@ -7,6 +7,7 @@ on:
         - .gitignore
         - README.md
         - INSTALL.md
+        - USE_CASES.md
         - LICENSE
         - TODO
         - Dockerfile
@@ -17,6 +18,7 @@ on:
         - .gitignore
         - README.md
         - INSTALL.md
+        - USE_CASES.md
         - LICENSE
         - TODO
         - Dockerfile
