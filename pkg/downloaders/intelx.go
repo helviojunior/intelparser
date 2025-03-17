@@ -205,12 +205,11 @@ func (dwn *IntelXDownloader) Run() *IntelXDownloaderStatus {
 	    go func() {
 	    	defer close(dwn.results)
 
-		    dwn.status.TotalFiles = 0
+		    dwn.status.TotalFiles -= dwn.status.Duplicated
 		    dwn.status.Duplicated = 0
 
 		    var item ixapi.SearchResult
 		    for rows.Next() {
-		    	dwn.status.TotalFiles++
 		        dwn.conn.ScanRows(rows, &item)
 		        dwn.results <- item
 		    }
