@@ -32,6 +32,7 @@ type IntelXDownloader struct {
 	Term string
 	ZipFile string
 	Threads int
+	ProxyURL string // Proxy to use
 
 	apiKey string
 	ctx    context.Context
@@ -165,7 +166,9 @@ func (dwn *IntelXDownloader) Run() *IntelXDownloaderStatus {
 		    go func() {
 		        defer wg.Done()
 		        
-				api := ixapi.IntelligenceXAPI{}
+				api := ixapi.IntelligenceXAPI{
+					ProxyURL: dwn.ProxyURL,
+				}
 				api.Init("", dwn.apiKey)
 
 		        for dwn.status.Running {
@@ -375,7 +378,10 @@ func (dwn *IntelXDownloader) SearchNext() (int, error) {
 	logger := log.With("term", dwn.Term)
 
 	log.Info("Starting IX Api")
-	search := ixapi.IntelligenceXAPI{}
+	search := ixapi.IntelligenceXAPI{
+		ProxyURL: dwn.ProxyURL,
+	}
+
 	search.Init("", dwn.apiKey)
 
 	logger.Info("Quering IX Api")

@@ -80,6 +80,8 @@ or by setting the IXAPIKEY environment variable.
             os.Exit(2)
         }
 
+        dwn.ProxyURL = downloadProxy
+
         status := dwn.Run()
         dwn.Close()
 

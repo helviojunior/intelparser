@@ -6,6 +6,7 @@ import (
     "github.com/spf13/cobra"
 )
 
+var downloadProxy string
 var downloadCmd = &cobra.Command{
     Use:   "download",
     Short: "Work with intelparser downloaders",
@@ -29,4 +30,6 @@ Work with intelparser downloaders.
 
 func init() {
     rootCmd.AddCommand(downloadCmd)
+
+    downloadCmd.PersistentFlags().StringVarP(&downloadProxy, "proxy", "X", "", "Proxy to pass traffic through: <scheme://ip:port>")
 }

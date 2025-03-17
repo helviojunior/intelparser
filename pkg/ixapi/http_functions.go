@@ -159,6 +159,8 @@ func (api *IntelligenceXAPI) apiStatusToError(StatusCode int) (err error) {
 		return errors.New("Internal API error")
 	case http.StatusNotImplemented:
 		return errors.New("Not implemented by API")
+	case 402:
+		return errors.New("Daily limits exceeded")
 	}
 
 	return errors.New("Unknown API error, returned HTTP status " + strconv.Itoa(StatusCode))
