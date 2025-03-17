@@ -165,7 +165,7 @@ func (dwn *IntelXDownloader) Run() *IntelXDownloaderStatus {
 
 	dwn.status.Clear()
 
-	log.Info("Listed " + strconv.Itoa(dwn.status.TotalFiles) + " registers")
+	log.Info("Listed " + strconv.Itoa(dwn.status.TotalFiles - dwn.status.Duplicated) + " registers")
 
 	if dwn.status.TotalFiles > 0 {
 
