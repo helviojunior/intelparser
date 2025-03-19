@@ -23,8 +23,10 @@ import (
     "strings"
     "time"
     "os"
+    //"fmt"
 
     "github.com/gofrs/uuid"
+
 )
 
 const defaultAPIURL = "https://2.intelx.io/"
@@ -57,6 +59,8 @@ type IntelligenceXAPI struct {
     RetryAttempts       int // in case of underlying transport failure
     UserAgent           string
     HTTPMaxResponseSize int64
+
+    WriteCounter *WriteCounter
 }
 
 // Init initializes the IX API. URL and Key may be empty to use defaults.
@@ -65,6 +69,7 @@ func (api *IntelligenceXAPI) Init(URL string, Key string) {
 
     api.RetryAttempts = 1
     api.HTTPMaxResponseSize = 100 * 1024 * 1024 // 100 MB
+    api.WriteCounter = &WriteCounter{}
 
     // Timeouts
     NetworkDialerTimeout := 10 * time.Second
@@ -110,6 +115,18 @@ func (api *IntelligenceXAPI) Init(URL string, Key string) {
         },
         Timeout: HTTPTimeout,
     }
+}
+
+// WriteCounter counts the number of bytes written to it. It implements to the io.Writer interface
+// and we can pass this into io.TeeReader() which will report progress on each write cycle.
+type WriteCounter struct {
+    Total uint64
+}
+
+func (wc *WriteCounter) Write(p []byte) (int, error) {
+    n := len(p)
+    wc.Total += uint64(n)
+    return n, nil
 }
 
 // SetAPIKey sets the API URL and Key. URL and Key may be empty to use defaults.
@@ -212,6 +229,45 @@ func (api *IntelligenceXAPI) FilePreview(ctx context.Context, item *Item) (text 
     return string(responseBytes), err
 }
 
+// DownloadZip reads the data of an item.
+func (api *IntelligenceXAPI) DownloadZip(ctx context.Context, searchID uuid.UUID, Limit int, OutputFile string) (err error) {
+    // Request: GET /intelligent/search/export?id=[search id]&f=1&l=[limit]&k=[api key]
+    request := "?f=1&l=" + strconv.Itoa(Limit) + "&id=" + searchID.String() + "&k=" + api.Key.String()
+
+    // Create the file, but give it a tmp file extension, this means we won't overwrite a
+    // file until it's downloaded, but we'll remove the tmp extension once downloaded.
+    out, err := os.Create(OutputFile + ".tmp")
+    if err != nil {
+        return err
+    }
+
+    response, err := api.httpRequest(ctx, "intelligent/search/export"+request, "GET", nil, "")
+    if err != nil {
+        return err
+    }
+
+    defer response.Body.Close()
+
+    if response.StatusCode != http.StatusOK {
+        return api.apiStatusToError(response.StatusCode)
+    }
+
+    // Create our progress reporter and pass it to be used alongside our writer
+    api.WriteCounter = &WriteCounter{}
+    if _, err = io.Copy(out, io.TeeReader(response.Body, api.WriteCounter)); err != nil {
+        out.Close()
+        return err
+    }
+
+    // Close the file without defer so it can happen before Rename()
+    out.Close()
+    
+    if err = os.Rename(OutputFile+".tmp", OutputFile); err != nil {
+        return err
+    }
+    return nil
+}
+
 // FileRead reads the data of an item.
 func (api *IntelligenceXAPI) FileRead(ctx context.Context, item *Item, Limit int64) (data []byte, err error) {
     // Request: GET /file/read?type=0&storageid=[storage identifier]&bucket=[optional bucket]
@@ -272,7 +328,7 @@ func (api *IntelligenceXAPI) SearchGetResultsAll(ctx context.Context, searchID u
 
     // Terminate the search if required. When Status: 0 = Success with results (continue), 3 = No results yet available keep trying, 4 = Error, 5 = Deadline exceeded
     if lastStatus == 0 || lastStatus == 3 || lastStatus == 4 || lastStatus == 5 {
-        api.SearchTerminate(context.Background(), searchID)
+        //api.SearchTerminate(context.Background(), searchID)
     }
 
     if lastStatus != 4 {

@@ -2,7 +2,7 @@ package downloaders
 
 import (
 
-    //"errors"
+    "errors"
     "context"
     "sync"
     "time"
@@ -14,8 +14,11 @@ import (
     "encoding/csv"
     "fmt"
 	"reflect"
-	"strconv"
+	//"strconv"
 
+	"github.com/gofrs/uuid"
+
+    "github.com/dustin/go-humanize"
     //"github.com/helviojunior/intelparser/internal/ascii"
     "github.com/helviojunior/intelparser/internal/islazy"
     "github.com/helviojunior/intelparser/pkg/database"
@@ -51,6 +54,7 @@ type IntelXDownloaderStatus struct {
 	Downloaded int
 	Duplicated int
 	TotalBytes int64
+	StateBytes int64
 	Label string
 	Step string
 	Running bool
@@ -74,12 +78,11 @@ func (st *IntelXDownloaderStatus) Print() {
             st.Label = "[=====]"
 	}
 
-	fmt.Fprintf(os.Stderr, "%s\n    %s, reg.: %d, downloaded: %d, dup.: %d, bytes: %d               \r\033[A", 
+	fmt.Fprintf(os.Stderr, "%s\n    %s, reg.: %d, downloaded: %d, dup.: %d, bytes: %s               \r\033[A", 
     	"                                                                        ",
-    	st.Step, st.TotalFiles, st.Downloaded, st.Duplicated, st.TotalBytes)
+    	st.Step, st.TotalFiles, st.Downloaded, st.Duplicated, humanize.Bytes(uint64(st.TotalBytes + st.StateBytes)))
 	
 } 
-
 
 func (st *IntelXDownloaderStatus) Clear() { 
 	fmt.Fprintf(os.Stderr, "\r%s\r", 
@@ -126,6 +129,7 @@ func NewIntelXDownloader(term string, apiKey string, outZipFile string) (*IntelX
 			TotalFiles: 0,
 			Downloaded: 0,
 			TotalBytes: 0,
+			StateBytes: 0,
 			Label: "[=====]",
 			Step: "",
 			Running: true,
@@ -149,8 +153,6 @@ func (dwn *IntelXDownloader) Run() *IntelXDownloaderStatus {
         }
     }()
 
-    log.Info("Quering IX Api")
-    dwn.status.Step = "Searching (1/4)"
 	r := true
 	for r {
 		c, err := dwn.SearchNext()
@@ -163,150 +165,56 @@ func (dwn *IntelXDownloader) Run() *IntelXDownloaderStatus {
 		}
 	}
 
-	dwn.status.Clear()
+	log.Info("Writting Info.csv")
+    dwn.status.Step = "Info.csv (3/4)"
+    err := dwn.WriteInfoCsv()
+    if err != nil {
+        log.Error("Error writting Info.csv", "err", err)
+        return dwn.status
+    }
 
-	log.Info("Listed " + strconv.Itoa(dwn.status.TotalFiles - dwn.status.Duplicated) + " registers")
+    //Compress   
+    log.Info("Compressing files")
+    dwn.status.Step = "Compressing (4/4)"
+    log.Debug("Destination", "zip", dwn.ZipFile)
 
-	if dwn.status.TotalFiles > 0 {
+    entries, err := os.ReadDir(dwn.tempFolder)
+    if err != nil {
+        log.Error("Error getting file list from temp folder", "err", err)
+        return dwn.status
+    }
+ 
+ 	archive, err := os.Create(dwn.ZipFile)
+    if err != nil {
+        log.Error("Error creating zip file", "err", err)
+        return dwn.status
+    }
+    defer archive.Close()
+    zipWriter := zip.NewWriter(archive)
 
-	    //Write info.csv
-		dwn.status.Clear()
-	    log.Info("Writting Info.csv")
-	    dwn.status.Step = "Info.csv (2/4)"
-	    err := dwn.WriteInfoCsv()
+    for _, e := range entries {
+    	log.Debug("Compressing", "file", e.Name())
+        f1, err := os.Open(filepath.Join(dwn.tempFolder, e.Name()))
 	    if err != nil {
-	        log.Error("Error writting Info.csv", "err", err)
-	        return dwn.status
-	    }
+	        log.Error("Error openning file", "file", e.Name(), "err", err)
+	    }else{
+		    defer f1.Close()
 
-	    dwn.status.Clear()
-		log.Info("Downloading files")
-		dwn.status.Step = "Downloading (3/4)"
-		c, err := database.Connection("sqlite:///"+ dwn.dbName, false, false)
-		if err != nil {
-			log.Error("Error reconnecting to database", "err", err)
-			return dwn.status
-		}
-		dwn.conn = c
+		    //if e.Name() != "Info.sqlite3" {
 
-		wg := sync.WaitGroup{}
-		dwn.status.Running = true
-		dwn.mutex.Lock()
-		rows, err := dwn.conn.Model(&ixapi.SearchResult{}).Rows()
-		dwn.mutex.Unlock()
-	    defer rows.Close()
-	    
-	    if err != nil {
-	    	log.Error("Error getting file list", "err", err)
-	        return dwn.status
-	    }
-
-		dwn.results = make(chan ixapi.SearchResult)
-	    go func() {
-	    	defer close(dwn.results)
-
-		    dwn.status.TotalFiles -= dwn.status.Duplicated
-		    dwn.status.Duplicated = 0
-
-		    var item ixapi.SearchResult
-		    for rows.Next() {
-		        dwn.conn.ScanRows(rows, &item)
-		        dwn.results <- item
-		    }
-		}()
-
-		// will spawn Parser.Theads number of "workers" as goroutines
-		for w := 0; w < dwn.Threads; w++ {
-			wg.Add(1)
-		    go func() {
-		        defer wg.Done()
-		        
-				api := ixapi.IntelligenceXAPI{
-					ProxyURL: dwn.ProxyURL,
-				}
-				api.Init("", dwn.apiKey)
-
-		        for dwn.status.Running {
-					select {
-					case <-dwn.ctx.Done():
-						return
-					case record, ok := <-dwn.results:
-						if !ok || !dwn.status.Running {
-							return
-						}
-						
-						err := dwn.DownloadResult(&api, record)
-						
-						if err != nil {
-							log.Error("Error downloading file", "did", record.SystemID, "err", err)
-						}else{
-							dwn.status.Downloaded++
-						}
-						
-						//previewText, _ := api.FilePreview(ctx, &record.Item)
-						//resultLink := frontendBaseURL + "?did=" + record.SystemID.String()
-
-						//title := record.Name
-						//if title == "" {
-						//	title = "Untitled Document"
-						//}
-
-						//text += fmt.Sprintf(templateRecordPlain, n, record.Date.UTC().Format("2006-01-02 15:04"), title, previewHTMLToText(previewText), resultLink)
-
-					}
-				}
-
-		    }()
-		}
-
-	    wg.Wait()
-	    dwn.status.Running = false
-	   	dwn.status.Clear()
-
-	    //Compress   
-	    log.Info("Compressing files")
-	    dwn.status.Step = "Compressing (4/4)"
-	    log.Debug("Destination", "zip", dwn.ZipFile)
-
-	    entries, err := os.ReadDir(dwn.tempFolder)
-	    if err != nil {
-	        log.Error("Error getting file list from temp folder", "err", err)
-	        return dwn.status
-	    }
-	 
-	 	archive, err := os.Create(dwn.ZipFile)
-	    if err != nil {
-	        log.Error("Error creating zip file", "err", err)
-	        return dwn.status
-	    }
-	    defer archive.Close()
-	    zipWriter := zip.NewWriter(archive)
-
-	    for _, e := range entries {
-	    	log.Debug("Compressing", "file", e.Name())
-	        f1, err := os.Open(filepath.Join(dwn.tempFolder, e.Name()))
+		    w1, err := zipWriter.Create(e.Name())
 		    if err != nil {
-		        log.Error("Error openning file", "file", e.Name(), "err", err)
+		        log.Error("Error creatting file at Zip container", "file", e.Name(), "err", err)
 		    }else{
-			    defer f1.Close()
-
-			    //if e.Name() != "Info.sqlite3" {
-
-			    w1, err := zipWriter.Create(e.Name())
-			    if err != nil {
-			        log.Error("Error creatting file at Zip container", "file", e.Name(), "err", err)
-			    }else{
-				    if _, err := io.Copy(w1, f1); err != nil {
-				        log.Error("Error copping file data to Zip container", "file", e.Name(), "err", err)
-				    }
-				}
-				//}
+			    if _, err := io.Copy(w1, f1); err != nil {
+			        log.Error("Error copping file data to Zip container", "file", e.Name(), "err", err)
+			    }
 			}
+			//}
+		}
 
-	    }
-	    zipWriter.Close()
-
-	}
+    }
+    zipWriter.Close()
 
     islazy.RemoveFolder(dwn.tempFolder)
 
@@ -396,32 +304,57 @@ func (dwn *IntelXDownloader) WriteInfoCsv() error {
 	
 }
 
-func (dwn *IntelXDownloader) DownloadResult(api *ixapi.IntelligenceXAPI, record ixapi.SearchResult) error {
-	logger := log.With("did", record.SystemID)
+func (dwn *IntelXDownloader) DownloadResult(api *ixapi.IntelligenceXAPI, searchID uuid.UUID, Limit int) error {
+	logger := log.With("searchID", searchID.String())
 
-	fileName := filepath.Join(dwn.tempFolder, islazy.SafeFileName(record.SystemID) + record.GetExtension())
+	fileName := filepath.Join(dwn.tempFolder, islazy.SafeFileName(searchID.String()) + ".zip")
 
-	logger.Debug("Downloading", "bytes", record.Size, "path", fileName)
-	fData, err := api.FileRead(context.Background(), &record.Item, record.Size)
+	err := api.DownloadZip(context.Background(), searchID, Limit, fileName)
 	if err != nil {
 		logger.Debug("Error downloading data", "err", err)
 		return err 
 	}
-	dwn.status.TotalBytes += record.Size
 
-	// Open the file in append mode, create it if it doesn't exist
-	file, err := os.OpenFile(fileName, os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		logger.Debug("Error openning file", "err", err)
-		return err 
-	}
-	defer file.Close()
+	logger.Debug("Checking downloaded file")
+	var mime string
+    if mime, err = islazy.GetMimeType(fileName); err != nil {
+        logger.Debug("Error getting mime type", "err", err)
+        return err
+    }
 
-	// Append the JSON data as a new line
-	if _, err := file.Write(fData); err != nil {
-		logger.Debug("Error saving file data", "err", err)
-		return err 
-	}
+    logger.Debug("Mime type", "mime", mime)
+    if mime != "application/zip" {
+        return errors.New("invalid file type")
+    }
+
+    var dst string
+    if dst, err = islazy.CreateDirFromFilename(dwn.tempFolder, fileName); err != nil {
+        logger.Debug("Error creating temp folder to extract zip file", "err", err)
+        return err
+    }
+
+    if err = islazy.Unzip(fileName, dst); err != nil {
+        logger.Debug("Error extracting zip file", "temp_folder", dst, "err", err)
+        return err
+    }
+
+    entries, err := os.ReadDir(dst)
+    if err != nil {
+        return err
+    }
+
+    for _, e := range entries {
+
+        if e.Name() != "Info.csv" {
+        	dstFileName := filepath.Join(dwn.tempFolder, e.Name())
+		    if err = os.Rename(filepath.Join(dst, e.Name()), dstFileName); err != nil {
+		        return err
+		    }
+        }
+    }
+
+    islazy.RemoveFolder(dst)
+
 	return nil
 }
 
@@ -442,7 +375,8 @@ func (dwn *IntelXDownloader) SearchNext() (int, error) {
 
 	search.Init("", dwn.apiKey)
 
-	logger.Debug("Quering IX Api")
+    log.Info("Quering IX Api")
+    dwn.status.Step = "Searching (1/4)"
 
 	response := dwn.conn.Raw("SELECT min(`date`) as dt1 from intex_result_item")
     if response != nil {
@@ -459,7 +393,7 @@ func (dwn *IntelXDownloader) SearchNext() (int, error) {
     }
 
     logger.Debug("Search time", "DateFrom", DateFrom, "DateTo", DateTo)
-	results, selectorInvalid, err := search.SearchWithDates(dwn.ctx, dwn.Term, DateFrom, DateTo, ixapi.SortDateDesc, 1000, ixapi.DefaultWaitSortTime, ixapi.DefaultTimeoutGetResults)
+	searchID, results, selectorInvalid, err := search.SearchWithDates(dwn.ctx, dwn.Term, DateFrom, DateTo, ixapi.SortDateDesc, 1000, ixapi.DefaultWaitSortTime, ixapi.DefaultTimeoutGetResults)
 
 	if err != nil {
 		logger.Error("Error querying results", "err", err)
@@ -522,6 +456,35 @@ func (dwn *IntelXDownloader) SearchNext() (int, error) {
 	}
 
     wg.Wait()
+
+    log.Info("Downloading files")
+    dwn.status.Step = "Downloading (2/4)"
+
+    downloading := true
+    wg.Add(1)
+	go func() {
+    	defer wg.Done()
+		dwn.DownloadResult(&search, *searchID, 1000)
+		search.SearchTerminate(context.Background(), *searchID)
+		downloading = false
+	}()
+
+	wg.Add(1)
+	go func() {
+    	defer wg.Done()
+		for downloading {
+			if search.WriteCounter.Total > 0 {
+				dwn.status.StateBytes = int64(search.WriteCounter.Total)
+			}
+			time.Sleep(time.Duration(time.Second/4))
+		}
+	}()
+
+    wg.Wait()
+
+	if search.WriteCounter.Total > 0 {
+		dwn.status.TotalBytes += int64(search.WriteCounter.Total)
+	}
 
     return inserted, nil
 }

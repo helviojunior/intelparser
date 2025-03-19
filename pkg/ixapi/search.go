@@ -12,6 +12,8 @@ import (
     "context"
     "time"
 
+
+    "github.com/gofrs/uuid"
     "github.com/go-dedup/simhash"
 )
 
@@ -49,23 +51,25 @@ func (api *IntelligenceXAPI) Search(ctx context.Context, Selector string, Sort, 
 // WaitSort should be a few hundred ms, giving the API time to sort the results before querying them.
 // Limit is the max count of results to query per bucket. The total number of results returned might be higher.
 // TimeoutGetResults is the max amount of time for querying all results. This should be at least a few seconds but a timeout of 10-30 seconds makes sense.
-func (api *IntelligenceXAPI) SearchWithDates(ctx context.Context, Selector string, DateFrom, DateTo time.Time, Sort, Limit int, WaitSort, TimeoutGetResults time.Duration) (records []SearchResult, selectorInvalid bool, err error) {
+func (api *IntelligenceXAPI) SearchWithDates(ctx context.Context, Selector string, DateFrom, DateTo time.Time, Sort, Limit int, WaitSort, TimeoutGetResults time.Duration) (searchID *uuid.UUID, records []SearchResult, selectorInvalid bool, err error) {
 
     // make the search
-    searchID, selectorInvalid, err := api.SearchStartAdvanced(ctx, IntelligentSearchRequest{Term: Selector, Sort: Sort, MaxResults: Limit, DateFrom: DateFrom.Format("2006-01-02 15:04:05"), DateTo: DateTo.Format("2006-01-02 15:04:05")})
+    sID, selectorInvalid, err := api.SearchStartAdvanced(ctx, IntelligentSearchRequest{Term: Selector, Sort: Sort, MaxResults: Limit, DateFrom: DateFrom.Format("2006-01-02 15:04:05"), DateTo: DateTo.Format("2006-01-02 15:04:05")})
     if err != nil {
-        return nil, false, err
+        return nil, nil, false, err
     }
+
+    searchID = &sID
 
     // give some time for sorting
     time.Sleep(WaitSort)
 
-    records, err = api.SearchGetResultsAll(ctx, searchID, Limit, TimeoutGetResults)
+    records, err = api.SearchGetResultsAll(ctx, *searchID, Limit, TimeoutGetResults)
     if err != nil {
-        return nil, false, err
+        return nil, nil, false, err
     }
 
-    return records, selectorInvalid, nil
+    return searchID, records, selectorInvalid, nil
 }
 
 // GetTag gets a tags value for the first occurrence. Empty if not found.

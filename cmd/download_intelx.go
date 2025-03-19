@@ -7,6 +7,8 @@ import (
     "time"
     "os"
 
+
+    "github.com/dustin/go-humanize"
     "github.com/gofrs/uuid"
     "github.com/helviojunior/intelparser/internal/ascii"
     "github.com/helviojunior/intelparser/internal/islazy"
@@ -100,7 +102,7 @@ or by setting the IXAPIKEY environment variable.
             islazy.FormatIntComma(status.TotalFiles), 
             islazy.FormatIntComma(status.Duplicated),
             islazy.FormatIntComma(status.Downloaded),
-            islazy.FormatInt64Comma(status.TotalBytes),
+            humanize.Bytes(uint64(status.TotalBytes)),
         )
 
     },
