@@ -106,6 +106,7 @@ func (api *IntelligenceXAPI) httpRequestGet2(ctx context.Context, Function strin
 // httpRequest makes a HTTP request to the API. If err is nil, response must be closed by the caller.
 func (api *IntelligenceXAPI) httpRequest(ctx context.Context, Function, Method string, Data []byte, ContentType string) (response *http.Response, err error) {
 
+	api.Client.Timeout = api.HTTPTimeout
 	for n := 0; ; n++ {
 
 		var req *http.Request
@@ -130,6 +131,48 @@ func (api *IntelligenceXAPI) httpRequest(ctx context.Context, Function, Method s
 
 		// make the request
 		response, err = api.Client.Do(req.WithContext(ctx))
+
+		// special case: sockets exhausted. Wait for 200ms to give the system time to free up resources. Full error message: "bind: An operation on a socket could not be performed because the system lacked sufficient buffer space or because a queue was full."
+		// or error "connectex: Only one usage of each socket address (protocol/network address/port) is normally permitted."
+		if err != nil && (strings.Contains(err.Error(), "system lacked sufficient buffer space") || strings.Contains(err.Error(), "Only one usage of each socket address")) {
+			time.Sleep(time.Millisecond * 200)
+		}
+
+		// normal access mode: return if success, max retry attempts
+		if err == nil || n >= api.RetryAttempts {
+			return response, err
+		}
+	}
+}
+
+
+// httpRequest makes a HTTP request to the API. If err is nil, response must be closed by the caller.
+func (api *IntelligenceXAPI) httpRequest2(Function, Method string, Data []byte, ContentType string) (response *http.Response, err error) {
+
+	for n := 0; ; n++ {
+
+		var req *http.Request
+		var body io.Reader
+
+		if Method == "POST" {
+			body = bytes.NewReader(Data)
+		}
+
+		req, err = http.NewRequest(Method, api.URL+Function, body)
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("x-key", api.Key.String())
+		req.Header.Set("Connection", "keep-alive")
+		req.Header.Set("User-Agent", api.UserAgent)
+
+		if Method == "POST" {
+			req.Header.Set("Content-Type", ContentType)
+		}
+
+		// make the request
+		response, err = api.Client.Do(req)
 
 		// special case: sockets exhausted. Wait for 200ms to give the system time to free up resources. Full error message: "bind: An operation on a socket could not be performed because the system lacked sufficient buffer space or because a queue was full."
 		// or error "connectex: Only one usage of each socket address (protocol/network address/port) is normally permitted."

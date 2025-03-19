@@ -14,12 +14,11 @@ import (
     "encoding/csv"
     "fmt"
 	"reflect"
-	//"strconv"
+	"strconv"
 
 	"github.com/gofrs/uuid"
 
-    "github.com/dustin/go-humanize"
-    //"github.com/helviojunior/intelparser/internal/ascii"
+    "github.com/helviojunior/intelparser/internal/ascii"
     "github.com/helviojunior/intelparser/internal/islazy"
     "github.com/helviojunior/intelparser/pkg/database"
     "github.com/helviojunior/intelparser/pkg/ixapi"
@@ -31,11 +30,14 @@ import (
 const textSupportedSelectors = "Selector types supported:\n* Email address\n* Domain, including wildcards like *.example.com\n* URL\n* IPv4 and IPv6\n* CIDRv4 and CIDRv6\n* Phone Number\n* Bitcoin address\n* MAC address\n* IPFS Hash\n* UUID\n* Simhash\n* Credit card number\n* IBAN\n"
 var csvExludedFields = []string{"near_text"}
 
+var byteSizes = []string{"B", "kB"}
+
 type IntelXDownloader struct {
 	Term string
 	ZipFile string
 	Threads int
-	ProxyURL string // Proxy to use
+	ProxyURL string // Proxy to use+
+	Limit int 
 
 	apiKey string
 	ctx    context.Context
@@ -61,26 +63,17 @@ type IntelXDownloaderStatus struct {
 }
 
 func (st *IntelXDownloaderStatus) Print() { 
-	switch st.Label {
-		case "[=====]":
-            st.Label = "[ ====]"
-        case  "[ ====]":
-            st.Label = "[  ===]"
-        case  "[  ===]":
-            st.Label = "[=  ==]"
-        case "[=  ==]":
-            st.Label = "[==  =]"
-        case  "[==  =]":
-            st.Label = "[===  ]"
-        case "[===  ]":
-            st.Label = "[==== ]"
-        default:
-            st.Label = "[=====]"
-	}
+	st.Label = ascii.GetNextSpinner(st.Label)
 
-	fmt.Fprintf(os.Stderr, "%s\n    %s, reg.: %d, downloaded: %d, dup.: %d, bytes: %s               \r\033[A", 
+	fmt.Fprintf(os.Stderr, "%s\n    %s %s, reg.: %d, downloaded: %d, dup.: %d, bytes: %s               \r\033[A", 
     	"                                                                        ",
-    	st.Step, st.TotalFiles, st.Downloaded, st.Duplicated, humanize.Bytes(uint64(st.TotalBytes + st.StateBytes)))
+    	st.Label, 
+    	st.Step, 
+    	st.TotalFiles, 
+    	st.Downloaded, 
+    	st.Duplicated, 
+    	islazy.HumanateBytes(uint64(st.TotalBytes + st.StateBytes), 1000, byteSizes),
+    )
 	
 } 
 
@@ -118,6 +111,7 @@ func NewIntelXDownloader(term string, apiKey string, outZipFile string) (*IntelX
 		Term:     	term,
 		ZipFile:    outZipFile,
 		Threads:    3,
+		Limit:      1000,
 		apiKey: 	apiKey,
 		dbName: 	dbName,
 		conn: 		c,
@@ -140,6 +134,7 @@ func NewIntelXDownloader(term string, apiKey string, outZipFile string) (*IntelX
 func (dwn *IntelXDownloader) Run() *IntelXDownloaderStatus { 
 
 	defer dwn.Close()
+	defer dwn.ClearScreen()
 
 	go func() {
 		for dwn.status.Running {
@@ -160,13 +155,14 @@ func (dwn *IntelXDownloader) Run() *IntelXDownloaderStatus {
 			return dwn.status
 		}
 
-		if c == 0 {
+		if c == 0 || c <= int(float64(dwn.Limit) * 0.95){
 			r = false
 		}
 	}
 
+	dwn.status.Clear()
 	log.Info("Writting Info.csv")
-    dwn.status.Step = "Info.csv (3/4)"
+    dwn.status.Step = "Info.csv"
     err := dwn.WriteInfoCsv()
     if err != nil {
         log.Error("Error writting Info.csv", "err", err)
@@ -174,8 +170,9 @@ func (dwn *IntelXDownloader) Run() *IntelXDownloaderStatus {
     }
 
     //Compress   
+    dwn.status.Clear()
     log.Info("Compressing files")
-    dwn.status.Step = "Compressing (4/4)"
+    dwn.status.Step = "Compressing"
     log.Debug("Destination", "zip", dwn.ZipFile)
 
     entries, err := os.ReadDir(dwn.tempFolder)
@@ -200,8 +197,6 @@ func (dwn *IntelXDownloader) Run() *IntelXDownloaderStatus {
 	    }else{
 		    defer f1.Close()
 
-		    //if e.Name() != "Info.sqlite3" {
-
 		    w1, err := zipWriter.Create(e.Name())
 		    if err != nil {
 		        log.Error("Error creatting file at Zip container", "file", e.Name(), "err", err)
@@ -210,14 +205,13 @@ func (dwn *IntelXDownloader) Run() *IntelXDownloaderStatus {
 			        log.Error("Error copping file data to Zip container", "file", e.Name(), "err", err)
 			    }
 			}
-			//}
 		}
 
     }
     zipWriter.Close()
 
     islazy.RemoveFolder(dwn.tempFolder)
-
+	
 	return dwn.status
 }
 
@@ -304,12 +298,19 @@ func (dwn *IntelXDownloader) WriteInfoCsv() error {
 	
 }
 
+func (dwn *IntelXDownloader) ClearScreen() {
+	dwn.status.Clear()
+	fmt.Fprintf(os.Stderr, "\n")
+	dwn.status.Clear()
+	fmt.Fprintf(os.Stderr, "\033[A")
+}
+
 func (dwn *IntelXDownloader) DownloadResult(api *ixapi.IntelligenceXAPI, searchID uuid.UUID, Limit int) error {
 	logger := log.With("searchID", searchID.String())
 
 	fileName := filepath.Join(dwn.tempFolder, islazy.SafeFileName(searchID.String()) + ".zip")
 
-	err := api.DownloadZip(context.Background(), searchID, Limit, fileName)
+	err := api.DownloadZip(dwn.ctx, searchID, Limit, fileName)
 	if err != nil {
 		logger.Debug("Error downloading data", "err", err)
 		return err 
@@ -344,12 +345,17 @@ func (dwn *IntelXDownloader) DownloadResult(api *ixapi.IntelligenceXAPI, searchI
     }
 
     for _, e := range entries {
-
         if e.Name() != "Info.csv" {
+        	logger.Debug("Checking", "file", e.Name())
         	dstFileName := filepath.Join(dwn.tempFolder, e.Name())
+
+        	id := strings.Replace(e.Name(), filepath.Ext(e.Name()), "", 1)
+        	dwn.conn.Raw("UPDATE intex_result_item SET filename = ?, downloaded = 1 WHERE system_id = ?", e.Name(), id)
+
 		    if err = os.Rename(filepath.Join(dst, e.Name()), dstFileName); err != nil {
 		        return err
 		    }
+		    dwn.status.Downloaded++
         }
     }
 
@@ -361,6 +367,7 @@ func (dwn *IntelXDownloader) DownloadResult(api *ixapi.IntelligenceXAPI, searchI
 func (dwn *IntelXDownloader) SearchNext() (int, error) {
 	var DateFrom, DateTo time.Time
 	var inserted int
+	var qty int
 
 	DateFrom = time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC)
 	DateTo = time.Now().UTC()
@@ -369,31 +376,37 @@ func (dwn *IntelXDownloader) SearchNext() (int, error) {
 	logger := log.With("term", dwn.Term)
 
 	log.Debug("Starting IX Api")
-	search := ixapi.IntelligenceXAPI{
+	api := ixapi.IntelligenceXAPI{
 		ProxyURL: dwn.ProxyURL,
 	}
 
-	search.Init("", dwn.apiKey)
+	api.Init("", dwn.apiKey)
 
-    log.Info("Quering IX Api")
-    dwn.status.Step = "Searching (1/4)"
-
-	response := dwn.conn.Raw("SELECT min(`date`) as dt1 from intex_result_item")
+	qty = 0
+	response := dwn.conn.Raw("SELECT count(`id`) as qty, min(`date`) as min_date from intex_result_item")
     if response != nil {
+    	log.Debug("Response...")
+    	
         var mDate time.Time
         var tDate string
-        err := response.Row().Scan(&tDate)
+        err := response.Row().Scan(&qty, &tDate)
         if err == nil {
         	tDate = tDate[0:10]
         	mDate, err = time.Parse("2006-01-02", tDate)
         	if err == nil {
         		DateTo = mDate.AddDate(0, 0, 1)
         	}
+        }else if dwn.status.TotalFiles > 0{
+        	log.Debug("Error", "err", err)
+        	return 0, err
         }
     }
 
+    log.Info("Quering IntelX Api (" + strconv.Itoa(qty) + " -> " + strconv.Itoa(qty + dwn.Limit) + ")")
+    dwn.status.Step = "Searching"
+
     logger.Debug("Search time", "DateFrom", DateFrom, "DateTo", DateTo)
-	searchID, results, selectorInvalid, err := search.SearchWithDates(dwn.ctx, dwn.Term, DateFrom, DateTo, ixapi.SortDateDesc, 1000, ixapi.DefaultWaitSortTime, ixapi.DefaultTimeoutGetResults)
+	searchID, results, selectorInvalid, err := api.SearchWithDates(dwn.ctx, dwn.Term, DateFrom, DateTo, ixapi.SortDateDesc, dwn.Limit, ixapi.DefaultWaitSortTime, ixapi.DefaultTimeoutGetResults)
 
 	if err != nil {
 		logger.Error("Error querying results", "err", err)
@@ -438,17 +451,6 @@ func (dwn *IntelXDownloader) SearchNext() (int, error) {
 					}else{
 						dwn.status.Duplicated++
 					}
-
-					//previewText, _ := api.FilePreview(ctx, &record.Item)
-					//resultLink := frontendBaseURL + "?did=" + record.SystemID.String()
-
-					//title := record.Name
-					//if title == "" {
-					//	title = "Untitled Document"
-					//}
-
-					//text += fmt.Sprintf(templateRecordPlain, n, record.Date.UTC().Format("2006-01-02 15:04"), title, previewHTMLToText(previewText), resultLink)
-
 				}
 			}
 
@@ -458,14 +460,19 @@ func (dwn *IntelXDownloader) SearchNext() (int, error) {
     wg.Wait()
 
     log.Info("Downloading files")
-    dwn.status.Step = "Downloading (2/4)"
+    dwn.status.Step = "Downloading"
 
     downloading := true
+    var dwn_error error
     wg.Add(1)
 	go func() {
     	defer wg.Done()
-		dwn.DownloadResult(&search, *searchID, 1000)
-		search.SearchTerminate(context.Background(), *searchID)
+		err := dwn.DownloadResult(&api, *searchID, dwn.Limit)
+		if err != nil {
+			log.Error("Error downloading files", "err", err)
+			dwn_error = err
+		}
+		api.SearchTerminate(context.Background(), *searchID)
 		downloading = false
 	}()
 
@@ -473,8 +480,8 @@ func (dwn *IntelXDownloader) SearchNext() (int, error) {
 	go func() {
     	defer wg.Done()
 		for downloading {
-			if search.WriteCounter.Total > 0 {
-				dwn.status.StateBytes = int64(search.WriteCounter.Total)
+			if api.WriteCounter.Total > 0 {
+				dwn.status.StateBytes = int64(api.WriteCounter.Total)
 			}
 			time.Sleep(time.Duration(time.Second/4))
 		}
@@ -482,8 +489,13 @@ func (dwn *IntelXDownloader) SearchNext() (int, error) {
 
     wg.Wait()
 
-	if search.WriteCounter.Total > 0 {
-		dwn.status.TotalBytes += int64(search.WriteCounter.Total)
+    if dwn_error != nil {
+    	return 0, dwn_error
+    }
+
+	if api.WriteCounter.Total > 0 {
+		dwn.status.StateBytes = 0
+		dwn.status.TotalBytes += int64(api.WriteCounter.Total)
 	}
 
     return inserted, nil

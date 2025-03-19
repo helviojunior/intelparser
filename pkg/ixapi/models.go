@@ -13,6 +13,7 @@ package ixapi
 import (
 
     "time"
+    "path/filepath"
     "github.com/gofrs/uuid"
 )
 
@@ -78,6 +79,8 @@ type Item struct {
     XScore      int       `json:"xscore"`      // X-Score, ranking its relevancy. 0-100, default 50
     Simhash     uint64    `json:"simhash"`     // Simhash, depending on content type. Use hamming distance to compare equality of items data.
     Bucket      string    `json:"bucket"`      // Bucket
+    Filename    string    `json:"filename"`    // FileName
+    Downloaded  bool      `json:"downloaded"`  // If file already downloaded 
 
     // Tags are meta-data tags helping in classification of the items data. They reveal for example the language or a topic. Different to key-values they have hard-coded classes that
     // allow anyone to take action on them.
@@ -92,6 +95,14 @@ func (Item) TableName() string {
 }
 
 func (item *Item) GetExtension() string {
+
+    if item.Filename != "" {
+        ext := filepath.Ext(item.Filename)
+        if ext != "" {
+            return ext
+        }
+    }
+
     switch item.Media {
         case 9:
             return ".html"

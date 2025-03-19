@@ -26,6 +26,7 @@ import (
     //"fmt"
 
     "github.com/gofrs/uuid"
+    "github.com/helviojunior/intelparser/pkg/log"
 
 )
 
@@ -60,6 +61,8 @@ type IntelligenceXAPI struct {
     UserAgent           string
     HTTPMaxResponseSize int64
 
+    HTTPTimeout time.Duration
+
     WriteCounter *WriteCounter
 }
 
@@ -68,7 +71,7 @@ func (api *IntelligenceXAPI) Init(URL string, Key string) {
     api.SetAPIKey(URL, Key)
 
     api.RetryAttempts = 1
-    api.HTTPMaxResponseSize = 100 * 1024 * 1024 // 100 MB
+    api.HTTPMaxResponseSize = 1000 * 1024 * 1024 // 1000 MB
     api.WriteCounter = &WriteCounter{}
 
     // Timeouts
@@ -115,6 +118,8 @@ func (api *IntelligenceXAPI) Init(URL string, Key string) {
         },
         Timeout: HTTPTimeout,
     }
+
+    api.HTTPTimeout = HTTPTimeout
 }
 
 // WriteCounter counts the number of bytes written to it. It implements to the io.Writer interface
@@ -241,7 +246,8 @@ func (api *IntelligenceXAPI) DownloadZip(ctx context.Context, searchID uuid.UUID
         return err
     }
 
-    response, err := api.httpRequest(ctx, "intelligent/search/export"+request, "GET", nil, "")
+    api.Client.Timeout = 0
+    response, err := api.httpRequest2("intelligent/search/export"+request, "GET", nil, "")
     if err != nil {
         return err
     }
@@ -256,6 +262,13 @@ func (api *IntelligenceXAPI) DownloadZip(ctx context.Context, searchID uuid.UUID
     api.WriteCounter = &WriteCounter{}
     if _, err = io.Copy(out, io.TeeReader(response.Body, api.WriteCounter)); err != nil {
         out.Close()
+        if errors.Is(err, context.DeadlineExceeded) {
+            log.Debug("ContextDeadlineExceeded: true")
+        }
+        if os.IsTimeout(err) {
+            log.Debug("IsTimeoutError: true")
+        }
+
         return err
     }
 
