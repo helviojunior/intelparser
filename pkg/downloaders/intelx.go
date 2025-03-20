@@ -57,17 +57,17 @@ type IntelXDownloaderStatus struct {
 	Duplicated int
 	TotalBytes int64
 	StateBytes int64
-	Label string
+	Spin string
 	Step string
 	Running bool
 }
 
 func (st *IntelXDownloaderStatus) Print() { 
-	st.Label = ascii.GetNextSpinner(st.Label)
+	st.Spin = ascii.GetNextSpinner(st.Spin)
 
-	fmt.Fprintf(os.Stderr, "%s\n    %s %s, reg.: %d, downloaded: %d, dup.: %d, bytes: %s               \r\033[A", 
+	fmt.Fprintf(os.Stderr, "%s\n %s %s, reg.: %d, downloaded: %d, dup.: %d, bytes: %s               \r\033[A", 
     	"                                                                        ",
-    	st.Label, 
+    	ascii.ColoredSpin(st.Spin), 
     	st.Step, 
     	st.TotalFiles, 
     	st.Downloaded, 
@@ -78,9 +78,11 @@ func (st *IntelXDownloaderStatus) Print() {
 } 
 
 func (st *IntelXDownloaderStatus) Clear() { 
-	fmt.Fprintf(os.Stderr, "\r%s\r", 
-            "                                                                                ",
-        )
+	//fmt.Fprintf(os.Stderr, "\r%s\r", 
+    //        "                                                                                ",
+    //    )
+    ascii.ClearLine()
+    ascii.ShowCursor()
 }
 
 func NewIntelXDownloader(term string, apiKey string, outZipFile string) (*IntelXDownloader, error) {
@@ -124,7 +126,7 @@ func NewIntelXDownloader(term string, apiKey string, outZipFile string) (*IntelX
 			Downloaded: 0,
 			TotalBytes: 0,
 			StateBytes: 0,
-			Label: "[=====]",
+			Spin: "",
 			Step: "",
 			Running: true,
 		},
@@ -136,6 +138,7 @@ func (dwn *IntelXDownloader) Run() *IntelXDownloaderStatus {
 	defer dwn.Close()
 	defer dwn.ClearScreen()
 
+	ascii.HideCursor()
 	go func() {
 		for dwn.status.Running {
 			select {

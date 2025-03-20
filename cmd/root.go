@@ -7,7 +7,10 @@ import (
 	"os"
 	"fmt"
 	"time"
+	"os/signal"
+    "syscall"
 
+	"github.com/helviojunior/intelparser/internal/islazy"
 	"github.com/helviojunior/intelparser/internal/ascii"
 	"github.com/helviojunior/intelparser/pkg/log"
 	"github.com/helviojunior/intelparser/pkg/runner"
@@ -46,11 +49,40 @@ var rootCmd = &cobra.Command{
 			log.EnableDebug()
 			log.Debug("debug logging enabled")
 		}
+
+		if opts.Logging.TextFile != "" {
+			// check if the destination exists, if not, create it
+		    dst, err := islazy.CreateFileWithDir(opts.Logging.TextFile)
+		    if err != nil {
+		        return err
+		    }
+		    opts.Logging.TextFile = dst
+
+			err = log.SetOutFile(opts.Logging.TextFile)
+			if err != nil {
+		       return err
+		    }
+		}
+
 		return nil
 	},
 }
 
 func Execute() {
+	c := make(chan os.Signal)
+    signal.Notify(c, os.Interrupt, syscall.SIGTERM)
+    go func() {
+        <-c
+        ascii.ClearLine()
+        fmt.Fprintf(os.Stderr, "\r\n")
+        ascii.ClearLine()
+        ascii.ShowCursor()
+        log.Warn("interrupted, shutting down...                            ")
+        ascii.ClearLine()
+        fmt.Printf("\n")
+        os.Exit(2)
+    }()
+
 	rootCmd.CompletionOptions.DisableDefaultCmd = true
 	rootCmd.SilenceErrors = true
 	err := rootCmd.Execute()
@@ -82,5 +114,7 @@ func init() {
 
 	rootCmd.PersistentFlags().BoolVarP(&opts.Logging.Debug, "debug-log", "D", false, "Enable debug logging")
 	rootCmd.PersistentFlags().BoolVarP(&opts.Logging.Silence, "quiet", "q", false, "Silence (almost all) logging")
+
+	rootCmd.PersistentFlags().StringVarP(&opts.Logging.TextFile, "write-text-file", "o", "", "The file to write Text lines to")
 	
 }

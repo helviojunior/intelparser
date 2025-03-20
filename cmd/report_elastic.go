@@ -76,7 +76,7 @@ A --from-file and --elasticsearch-uri must be specified.`)),
             Url: 0,
             Email: 0,
             Credential: 0,
-            Label: "",
+            Spin: "",
         }
 
         running = true

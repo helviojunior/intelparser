@@ -17,11 +17,11 @@ import (
 	"bufio"
 	"bytes"
 	"io"
-    "os/signal"
-    "syscall"
+    //"os/signal"
+    //"syscall"
 
 	"github.com/h2non/filetype"
-	//"github.com/helviojunior/intelparser/internal/islazy"
+	"github.com/helviojunior/intelparser/internal/ascii"
 	"github.com/helviojunior/intelparser/pkg/models"
 	"github.com/helviojunior/intelparser/pkg/writers"
 	ahocorasick "github.com/BobuSumisu/aho-corasick"
@@ -90,31 +90,24 @@ type Status struct {
     Email int
     Credential int
 	Skipped int
-	Label string
+	Spin string
 	Running bool
 }
 
 func (st *Status) Print() { 
-	switch st.Label {
-		case "[=====]":
-            st.Label = "[ ====]"
-        case  "[ ====]":
-            st.Label = "[  ===]"
-        case  "[  ===]":
-            st.Label = "[=  ==]"
-        case "[=  ==]":
-            st.Label = "[==  =]"
-        case  "[==  =]":
-            st.Label = "[===  ]"
-        case "[===  ]":
-            st.Label = "[==== ]"
-        default:
-            st.Label = "[=====]"
-	}
+	st.Spin = ascii.GetNextSpinner(st.Spin)
 
-	fmt.Fprintf(os.Stderr, "%s\n    %s read: %d, failed: %d, ignored: %d               \n            cred: %d, url: %d, email: %d\r\033[A\033[A", 
+	fmt.Fprintf(os.Stderr, 
+        "%s\n %s read: %d, failed: %d, ignored: %d               \n %s cred: %d, url: %d, email: %d\r\033[A\033[A", 
     	"                                                                        ",
-    	st.Label, st.Parsed, st.Error, st.Skipped, st.Credential, st.Url, st.Email)
+    	ascii.ColoredSpin(st.Spin), 
+        st.Parsed, 
+        st.Error, 
+        st.Skipped, 
+        strings.Repeat(" ", 4 - len(st.Spin)),
+        st.Credential, 
+        st.Url, 
+        st.Email)
 	
 } 
 
@@ -154,7 +147,7 @@ func NewRunner(logger *slog.Logger, parser ParserDriver, opts Options, writers [
 			Parsed: 0,
 			Error: 0,
 			Skipped: 0,
-			Label: "[=====]",
+			Spin: "",
 			Running: true,
 		},
 	}, nil
@@ -207,9 +200,13 @@ func (run *Runner) ParsePositionalFile(file_path string) error {
 // Run executes the runner, processing targets as they arrive
 // in the Targets channel
 func (run *Runner) Run() Status {
+    defer run.Close()
+
+    ascii.HideCursor()
 	wg := sync.WaitGroup{}
 	swg := sync.WaitGroup{}
 
+    /*
     c := make(chan os.Signal)
     signal.Notify(c, os.Interrupt, syscall.SIGTERM)
     go func() {
@@ -221,6 +218,7 @@ func (run *Runner) Run() Status {
 
         run.status.Running = false
     }()
+    */
 
 	if !run.options.Logging.Silence {
 		swg.Add(1)
@@ -289,10 +287,10 @@ func (run *Runner) Run() Status {
 	run.status.Running = false
 	swg.Wait()
 
-    fmt.Fprintf(os.Stderr, "\n%s\n%s\r", 
-        "                                                                                ",
-        "                                                                                ",
-    )
+    //fmt.Fprintf(os.Stderr, "\n%s\n%s\r", 
+    //    "                                                                                ",
+    //    "                                                                                ",
+    //)
 
 	return *run.status
 }
@@ -300,6 +298,8 @@ func (run *Runner) Run() Status {
 func (run *Runner) Close() {
 	// close the driver
 	run.Parser.Close()
+    ascii.ClearLine()
+    ascii.ShowCursor()
 }
 
 // DetectBytes scans the given bytes and returns a list of findings

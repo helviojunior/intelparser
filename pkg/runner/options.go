@@ -18,6 +18,8 @@ type Logging struct {
     LogScanErrors bool
     // Silence all logging
     Silence bool
+    //Text file output
+    TextFile string
 }
 
 // Writer options

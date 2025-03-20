@@ -23,3 +23,7 @@ func GetNextSpinner(spin string) string {
 
 	return "⠿"
 }
+
+func ColoredSpin(spin string) string { 
+	return "\033[36m" + spin + "\033[0m"
+}

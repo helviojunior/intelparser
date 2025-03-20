@@ -28,7 +28,6 @@ import (
 	"gorm.io/gorm"
 )
 
-
 var MustSaveBucketWords = []string{
 	"leaks",
 }

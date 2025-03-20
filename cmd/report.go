@@ -24,7 +24,7 @@ type ConvStatus struct {
     Url int
     Email int
     Credential int
-    Label string
+    Spin string
 }
 
 var rptFilter = ""
@@ -72,12 +72,15 @@ func init() {
 }
 
 func (st *ConvStatus) Print() { 
-    st.Label = ascii.GetNextSpinner(st.Label)
+    st.Spin = ascii.GetNextSpinner(st.Spin)
 
-    fmt.Fprintf(os.Stderr, "%s\n    %s converted %d: cred: %d, url: %d, email: %d\r\033[A", 
+    fmt.Fprintf(os.Stderr, "%s\n %s converted %d: cred: %d, url: %d, email: %d\r\033[A", 
         "                                                                        ",
-        st.Label, st.Converted, st.Credential, st.Url, st.Email)
-    
+        ascii.ColoredSpin(st.Spin), 
+        st.Converted, 
+        st.Credential, 
+        st.Url, 
+        st.Email)
 } 
 
 func containsFilterWord(s string) bool {
@@ -142,7 +145,15 @@ func prepareSQL(fields []string) string {
     return sql
 }
 
+func clearScreen(){
+    ascii.ClearLine()
+    ascii.ShowCursor()
+}
+
 func convertFromDbTo(from string, writer writers.Writer, status *ConvStatus) error {
+    defer clearScreen()
+    ascii.HideCursor()
+
 	log.Info("starting conversion...")
     conn, err := database.Connection(fmt.Sprintf("sqlite:///%s", from), true, false)
     if err != nil {
@@ -248,6 +259,9 @@ func convertFromDbTo(from string, writer writers.Writer, status *ConvStatus) err
 }
 
 func convertFromJsonlTo(from string, writer writers.Writer, status *ConvStatus) error {
+    defer clearScreen()
+    ascii.HideCursor()
+
 	log.Info("starting conversion...")
 
     file, err := os.Open(from)
