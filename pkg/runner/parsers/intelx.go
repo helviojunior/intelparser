@@ -253,7 +253,10 @@ func (run *IntelxParser) ParseInfo(file_path string) error {
 
 			dt, err := time.Parse("2006-01-02 15:04:05", GetOrDefault(rec, Date, ""))
 			if err != nil {
-				dt = time.Now()
+				dt, err = time.Parse(time.RFC3339, GetOrDefault(rec, Date, ""))
+				if err != nil {
+					dt = time.Now()
+				}
 			}
 
 			run.info = append(run.info, InfoData{

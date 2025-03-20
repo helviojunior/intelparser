@@ -166,7 +166,7 @@ func (SearchResult) TableName() string {
 func (sr *SearchResult) GetCsv() *CsvItem {
     return &CsvItem{
         Name        : sr.Name,
-        Date        : sr.Date.Format(time.RFC3339),
+        Date        : sr.Date.Format("2006-01-02 15:04:05"),
         Bucket      : sr.BucketH,
         Media       : sr.MediaH,
         Content     : sr.TypeH,
