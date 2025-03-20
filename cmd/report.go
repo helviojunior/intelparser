@@ -72,22 +72,7 @@ func init() {
 }
 
 func (st *ConvStatus) Print() { 
-    switch st.Label {
-        case "[=====]":
-            st.Label = "[ ====]"
-        case  "[ ====]":
-            st.Label = "[  ===]"
-        case  "[  ===]":
-            st.Label = "[=  ==]"
-        case "[=  ==]":
-            st.Label = "[==  =]"
-        case  "[==  =]":
-            st.Label = "[===  ]"
-        case "[===  ]":
-            st.Label = "[==== ]"
-        default:
-            st.Label = "[=====]"
-    }
+    st.Label = ascii.GetNextSpinner(st.Label)
 
     fmt.Fprintf(os.Stderr, "%s\n    %s converted %d: cred: %d, url: %d, email: %d\r\033[A", 
         "                                                                        ",

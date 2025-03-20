@@ -308,9 +308,15 @@ func (dwn *IntelXDownloader) ClearScreen() {
 func (dwn *IntelXDownloader) DownloadResult(api *ixapi.IntelligenceXAPI, searchID uuid.UUID, Limit int) error {
 	logger := log.With("searchID", searchID.String())
 
-	fileName := filepath.Join(dwn.tempFolder, islazy.SafeFileName(searchID.String()) + ".zip")
+	tmpDwn, err := islazy.CreateDirFromFilename(dwn.tempFolder, "tmp_zip1_" + searchID.String())
+	if err != nil {
+        logger.Debug("Error creating temp folder to download zip file", "err", err)
+        return err
+    }
 
-	err := api.DownloadZip(dwn.ctx, searchID, Limit, fileName)
+	fileName := filepath.Join(tmpDwn, islazy.SafeFileName(searchID.String()) + ".zip")
+
+	err = api.DownloadZip(dwn.ctx, searchID, Limit, fileName)
 	if err != nil {
 		logger.Debug("Error downloading data", "err", err)
 		return err 
@@ -338,6 +344,7 @@ func (dwn *IntelXDownloader) DownloadResult(api *ixapi.IntelligenceXAPI, searchI
         logger.Debug("Error extracting zip file", "temp_folder", dst, "err", err)
         return err
     }
+    islazy.RemoveFolder(tmpDwn)
 
     entries, err := os.ReadDir(dst)
     if err != nil {
