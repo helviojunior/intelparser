@@ -55,7 +55,8 @@ jobs:
         run: |
           sudo apt update
           sudo apt install -y \
-            ca-certificates jq curl gcc-multilib gcc-mingw-w64
+            ca-certificates jq curl
+          if [[ "${{ matrix.goos }}" == "windows" ]]; then sudo apt install -y gcc-multilib gcc-mingw-w64; fi
       
       - name: Get OS and arch info
         id: vars
