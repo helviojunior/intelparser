@@ -27,7 +27,7 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-const textSupportedSelectors = "Selector types supported:\n* Email address\n* Domain, including wildcards like *.example.com\n* URL\n* IPv4 and IPv6\n* CIDRv4 and CIDRv6\n* Phone Number\n* Bitcoin address\n* MAC address\n* IPFS Hash\n* UUID\n* Simhash\n* Credit card number\n* IBAN\n"
+const textSupportedSelectors = "Selector types supported:\n  * Email address\n  * Domain, including wildcards like *.example.com\n  * URL\n  * IPv4 and IPv6\n  * CIDRv4 and CIDRv6\n  * Phone Number\n  * Bitcoin address\n  * MAC address\n  * IPFS Hash\n  * UUID\n  * Simhash\n  * Credit card number\n  * IBAN\n"
 var csvExludedFields = []string{"near_text"}
 
 var byteSizes = []string{"B", "kB"}
@@ -92,7 +92,7 @@ func NewIntelXDownloader(term string, apiKey string, outZipFile string) (*IntelX
     }
 
     dbName := filepath.Join(tempFolder, "info.sqlite3")
-    log.Info("Creating info database", "path", dbName)
+    log.Debug("Creating info database", "path", dbName)
 	c, err := database.Connection("sqlite:///"+ dbName, false, false)
 	if err != nil {
 		return nil, err
@@ -418,7 +418,11 @@ func (dwn *IntelXDownloader) SearchNext() (int, error) {
     logger.Debug("Search time", "DateFrom", DateFrom, "DateTo", DateTo)
 	searchID, results, selectorInvalid, err := api.SearchWithDates(dwn.ctx, dwn.Term, DateFrom, DateTo, ixapi.SortDateDesc, dwn.Limit, ixapi.DefaultWaitSortTime, ixapi.DefaultTimeoutGetResults)
 
-	if err != nil {
+	if err != nil && selectorInvalid {
+		logger.Error("Invalid input selector. Please specify a strong selector")
+		log.Warn(textSupportedSelectors)
+		return 0, err
+	}else if err != nil {
 		logger.Error("Error querying results", "err", err)
 		return 0, err
 	} else if len(results) == 0 && selectorInvalid {

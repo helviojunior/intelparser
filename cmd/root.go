@@ -108,7 +108,9 @@ func Execute() {
 	}
 
 	//Time to wait the logger flush
-	time.Sleep(time.Second)
+	time.Sleep(time.Second/4)
+    ascii.ShowCursor()
+    fmt.Printf("\n")
 }
 
 func init() {

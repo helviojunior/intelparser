@@ -11,10 +11,12 @@ package ixapi
 import (
     "context"
     "time"
+    "errors"
 
 
     "github.com/gofrs/uuid"
     "github.com/go-dedup/simhash"
+
 )
 
 // DefaultWaitSortTime is the suggested time to give the API to process and sort all the results, before the client queries them.
@@ -34,6 +36,10 @@ func (api *IntelligenceXAPI) Search(ctx context.Context, Selector string, Sort, 
     searchID, selectorInvalid, err := api.SearchStartAdvanced(ctx, IntelligentSearchRequest{Term: Selector, Sort: Sort, MaxResults: Limit})
     if err != nil {
         return nil, false, err
+    }
+
+    if selectorInvalid {
+        return nil, selectorInvalid, errors.New("Invalid Term")
     }
 
     // give some time for sorting
@@ -60,6 +66,10 @@ func (api *IntelligenceXAPI) SearchWithDates(ctx context.Context, Selector strin
     }
 
     searchID = &sID
+
+    if selectorInvalid {
+        return searchID, nil, selectorInvalid, errors.New("Invalid Term")
+    }
 
     // give some time for sorting
     time.Sleep(WaitSort)
