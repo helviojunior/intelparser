@@ -4,13 +4,15 @@ IntelParser is a modular Leaks and Intelligence files parser with threading!
 
 Available modules/parsers:
 
-* [x] IntelX (ZIP Downloads)
+* [x] IntelX downloader from API
+* [x] IntelX parser (ZIP Downloads)
 
 ## Some amazing features
 
-* [x] Pause and resume testing at any time.  
+* [x] Download using IntelX API.   
 * [x] Parse several file patterns.  
 * [x] Utilize multi-threading for faster performance.
+* [x] Export/integrate with string filter 
 * [x] And much more!  
 
 ## Writers
