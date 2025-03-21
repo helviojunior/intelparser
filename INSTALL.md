@@ -208,3 +208,40 @@ Function Get-AssetData {
 Invoke-DownloadIntelParser  
 
 ```
+
+
+# Build from source
+
+## Linux environment
+
+Follows the suggest commands to install linux environment
+
+### Installing Go v1.23.5
+
+```
+wget https://go.dev/dl/go1.23.5.linux-amd64.tar.gz
+rm -rf /usr/local/go && tar -C /usr/local -xzf go1.23.5.linux-amd64.tar.gz
+rm -rf /usr/bin/go && ln -s /usr/local/go/bin/go /usr/bin/go
+```
+
+## Build IntelParser
+
+Clone the repository and build the project with Golang:
+
+```
+git clone https://github.com/helviojunior/intelparser.git
+cd intelparser
+go get ./...
+go build
+```
+
+If you want to update go.sum file just run the command `go mod tidy`.
+
+## Installing system wide
+
+After build run the commands bellow
+
+```
+go install .
+ln -s /root/go/bin/intelparser /usr/bin/intelparser
+```

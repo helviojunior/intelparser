@@ -22,49 +22,61 @@ Available modules/parsers:
 * [x] And much more!  
 
 
-## Get Linux last release
-```
-apt install curl jq
+## Get last release
 
-url=$(curl -s https://api.github.com/repos/helviojunior/intelparser/releases | jq -r '[ .[] | {id: .id, tag_name: .tag_name, assets: [ .assets[] | select(.name|match("linux-amd64.tar.gz$")) | {name: .name, browser_download_url: .browser_download_url} ]} | select(.assets != []) ] | sort_by(.id) | reverse | first(.[].assets[]) | .browser_download_url')
+Check how to get last release by your Operational Systems procedures here [INSTALL.md](https://github.com/helviojunior/intelparser/blob/main/INSTALL.md)
 
-cd /opt
-rm -rf intelparser-latest.tar.gz intelparser
-wget -nv -O intelparser-latest.tar.gz "$url"
-tar -xzf intelparser-latest.tar.gz
-
-rsync -av intelparser /usr/local/sbin/
-chmod +x /usr/local/sbin/intelparser
-
-intelparser version
-```
-
-You can see other Operational Systems procedures here [INSTALL.md](https://github.com/helviojunior/intelparser/blob/main/INSTALL.md)
-
-
-# Build
-
-Clone the repository and build the project with Golang:
-
-```
-git clone https://github.com/helviojunior/intelparser.git
-cd intelparser
-go get ./...
-go build
-```
-
-If you want to update go.sum file just run the command `go mod tidy`.
-
-# Installing system wide
-
-After build run the commands bellow
-
-```
-go install .
-ln -s /root/go/bin/intelparser /usr/bin/intelparser
-```
 
 # Utilization
+
+## Search and download from IntelX
+
+```bash
+$ intelparser download intelx --term sec4us.com.br
+```
+
+## Parsing locally
+
+```bash
+intelparser parse intelx -p ~/Downloads/ix_sec4us.com.br_2025-16-03_17-17-40.zip
+```
+
+## Filtering out 
+
+To this example I used 3 terms to filter the data `sec4us`, `webapi` and `hookchain`
+
+```bash
+$ intelparser report convert --to-file sec4us.sqlite3 --filter sec4us,webapi,hookchain
+
+WARN Filter list: sec4us, webapi, hookchain
+INFO starting conversion...
+INFO Convertion status
+     -> Elapsed time.....: 00:00:01
+     -> Files converted..: 25
+     -> Credentials......: 0
+     -> URLs.............: 64
+     -> E-mails..........: 0
+```
+
+## Exporting to ElasticSearch
+
+To this example I used only one term to filter the data `sec4us`
+
+```
+$ intelparser report elastic --elasticsearch-uri "http://10.10.10.10:9200/sec4us" --filter sec4us
+
+WARN Filter list: sec4us
+INFO starting conversion...
+INFO Convertion status
+     -> Elapsed time.....: 00:00:01
+     -> Files converted..: 25
+     -> Credentials......: 0
+     -> URLs.............: 64
+     -> E-mails..........: 0
+```
+
+
+## Help
 
 ```
 $ intelparser parse -h
@@ -113,18 +125,6 @@ Global Flags:
 
 Use "intelparser parse [command] --help" for more information about a command.
 
-```
-
-## Linux environment
-
-Follows the suggest commands to install linux environment
-
-### Installing Go v1.23.5
-
-```
-wget https://go.dev/dl/go1.23.5.linux-amd64.tar.gz
-rm -rf /usr/local/go && tar -C /usr/local -xzf go1.23.5.linux-amd64.tar.gz
-rm -rf /usr/bin/go && ln -s /usr/local/go/bin/go /usr/bin/go
 ```
 
 ## Execution with ELK benchmark
