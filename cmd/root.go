@@ -106,6 +106,9 @@ func Execute() {
 
 		os.Exit(1)
 	}
+
+	//Time to wait the logger flush
+	time.Sleep(time.Second)
 }
 
 func init() {
