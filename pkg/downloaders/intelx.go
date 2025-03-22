@@ -163,55 +163,60 @@ func (dwn *IntelXDownloader) Run() *IntelXDownloaderStatus {
 		}
 	}
 
-	dwn.status.Clear()
-	log.Info("Writting Info.csv")
-    dwn.status.Step = "Info.csv"
-    err := dwn.WriteInfoCsv()
-    if err != nil {
-        log.Error("Error writting Info.csv", "err", err)
-        return dwn.status
-    }
+	if dwn.status.TotalFiles == 0 {
+		log.Warn("No result found")
+	}else{
 
-    //Compress   
-    dwn.status.Clear()
-    log.Info("Compressing files")
-    dwn.status.Step = "Compressing"
-    log.Debug("Destination", "zip", dwn.ZipFile)
-
-    entries, err := os.ReadDir(dwn.tempFolder)
-    if err != nil {
-        log.Error("Error getting file list from temp folder", "err", err)
-        return dwn.status
-    }
- 
- 	archive, err := os.Create(dwn.ZipFile)
-    if err != nil {
-        log.Error("Error creating zip file", "err", err)
-        return dwn.status
-    }
-    defer archive.Close()
-    zipWriter := zip.NewWriter(archive)
-
-    for _, e := range entries {
-    	log.Debug("Compressing", "file", e.Name())
-        f1, err := os.Open(filepath.Join(dwn.tempFolder, e.Name()))
+		dwn.status.Clear()
+		log.Info("Writting Info.csv")
+	    dwn.status.Step = "Info.csv"
+	    err := dwn.WriteInfoCsv()
 	    if err != nil {
-	        log.Error("Error openning file", "file", e.Name(), "err", err)
-	    }else{
-		    defer f1.Close()
+	        log.Error("Error writting Info.csv", "err", err)
+	        return dwn.status
+	    }
 
-		    w1, err := zipWriter.Create(e.Name())
+	    //Compress   
+	    dwn.status.Clear()
+	    log.Info("Compressing files")
+	    dwn.status.Step = "Compressing"
+	    log.Debug("Destination", "zip", dwn.ZipFile)
+
+	    entries, err := os.ReadDir(dwn.tempFolder)
+	    if err != nil {
+	        log.Error("Error getting file list from temp folder", "err", err)
+	        return dwn.status
+	    }
+	 
+	 	archive, err := os.Create(dwn.ZipFile)
+	    if err != nil {
+	        log.Error("Error creating zip file", "err", err)
+	        return dwn.status
+	    }
+	    defer archive.Close()
+	    zipWriter := zip.NewWriter(archive)
+
+	    for _, e := range entries {
+	    	log.Debug("Compressing", "file", e.Name())
+	        f1, err := os.Open(filepath.Join(dwn.tempFolder, e.Name()))
 		    if err != nil {
-		        log.Error("Error creatting file at Zip container", "file", e.Name(), "err", err)
+		        log.Error("Error openning file", "file", e.Name(), "err", err)
 		    }else{
-			    if _, err := io.Copy(w1, f1); err != nil {
-			        log.Error("Error copping file data to Zip container", "file", e.Name(), "err", err)
-			    }
-			}
-		}
+			    defer f1.Close()
 
-    }
-    zipWriter.Close()
+			    w1, err := zipWriter.Create(e.Name())
+			    if err != nil {
+			        log.Error("Error creatting file at Zip container", "file", e.Name(), "err", err)
+			    }else{
+				    if _, err := io.Copy(w1, f1); err != nil {
+				        log.Error("Error copping file data to Zip container", "file", e.Name(), "err", err)
+				    }
+				}
+			}
+
+	    }
+	    zipWriter.Close()
+	}
 
     islazy.RemoveFolder(dwn.tempFolder)
 	
@@ -432,84 +437,88 @@ func (dwn *IntelXDownloader) SearchNext() (int, error) {
 	}
 
 	dwn.status.TotalFiles += len(results)
-	logger.Debug("Results", "qty", len(results))
-	dwn.results = make(chan ixapi.SearchResult)
-    go func() {
-    	defer close(dwn.results)
-		for _, record := range results {
-			dwn.results <- record
-		}
-	}()
 
-	// will spawn Parser.Theads number of "workers" as goroutines
-	for w := 0; w < dwn.Threads; w++ {
-		wg.Add(1)
+	if len(results) > 0 {
+		logger.Debug("Results", "qty", len(results))
+
+		dwn.results = make(chan ixapi.SearchResult)
 	    go func() {
-	        defer wg.Done()
-	        
-	        for dwn.status.Running {
-				select {
-				case <-dwn.ctx.Done():
-					return
-				case record, ok := <-dwn.results:
-					if !ok || !dwn.status.Running {
+	    	defer close(dwn.results)
+			for _, record := range results {
+				dwn.results <- record
+			}
+		}()
+
+		// will spawn Parser.Theads number of "workers" as goroutines
+		for w := 0; w < dwn.Threads; w++ {
+			wg.Add(1)
+		    go func() {
+		        defer wg.Done()
+		        
+		        for dwn.status.Running {
+					select {
+					case <-dwn.ctx.Done():
 						return
-					}
-					
-					logger.Debug("Reg", "did", record.SystemID)
+					case record, ok := <-dwn.results:
+						if !ok || !dwn.status.Running {
+							return
+						}
+						
+						logger.Debug("Reg", "did", record.SystemID)
 
-					i, _ := dwn.WriteDb(&record)
+						i, _ := dwn.WriteDb(&record)
 
-					if i {
-						inserted++
-					}else{
-						dwn.status.Duplicated++
+						if i {
+							inserted++
+						}else{
+							dwn.status.Duplicated++
+						}
 					}
 				}
-			}
 
-	    }()
-	}
-
-    wg.Wait()
-
-    log.Info("Downloading files")
-    dwn.status.Step = "Downloading"
-
-    downloading := true
-    var dwn_error error
-    wg.Add(1)
-	go func() {
-    	defer wg.Done()
-		err := dwn.DownloadResult(&api, *searchID, dwn.Limit)
-		if err != nil {
-			log.Error("Error downloading files", "err", err)
-			dwn_error = err
+		    }()
 		}
-		api.SearchTerminate(context.Background(), *searchID)
-		downloading = false
-	}()
 
-	wg.Add(1)
-	go func() {
-    	defer wg.Done()
-		for downloading {
-			if api.WriteCounter.Total > 0 {
-				dwn.status.StateBytes = int64(api.WriteCounter.Total)
+	    wg.Wait()
+
+	    log.Info("Downloading files")
+	    dwn.status.Step = "Downloading"
+
+	    downloading := true
+	    var dwn_error error
+	    wg.Add(1)
+		go func() {
+	    	defer wg.Done()
+			err := dwn.DownloadResult(&api, *searchID, dwn.Limit)
+			if err != nil {
+				log.Error("Error downloading files", "err", err)
+				dwn_error = err
 			}
-			time.Sleep(time.Duration(time.Second/4))
+			api.SearchTerminate(context.Background(), *searchID)
+			downloading = false
+		}()
+
+		wg.Add(1)
+		go func() {
+	    	defer wg.Done()
+			for downloading {
+				if api.WriteCounter.Total > 0 {
+					dwn.status.StateBytes = int64(api.WriteCounter.Total)
+				}
+				time.Sleep(time.Duration(time.Second/4))
+			}
+		}()
+
+	    wg.Wait()
+
+	    if dwn_error != nil {
+	    	return 0, dwn_error
+	    }
+
+		if api.WriteCounter.Total > 0 {
+			dwn.status.StateBytes = 0
+			dwn.status.TotalBytes += int64(api.WriteCounter.Total)
 		}
-	}()
-
-    wg.Wait()
-
-    if dwn_error != nil {
-    	return 0, dwn_error
-    }
-
-	if api.WriteCounter.Total > 0 {
-		dwn.status.StateBytes = 0
-		dwn.status.TotalBytes += int64(api.WriteCounter.Total)
 	}
 
     return inserted, nil
