@@ -11,6 +11,7 @@ import (
     "github.com/helviojunior/intelparser/internal/islazy"
     "github.com/helviojunior/intelparser/pkg/log"
     "github.com/helviojunior/intelparser/pkg/writers"
+    resolver "github.com/helviojunior/gopathresolver"
     "github.com/spf13/cobra"
     
 )
@@ -41,7 +42,7 @@ A --from-file and --elasticsearch-uri must be specified.`)),
             return errors.New("from file not set")
         }
 
-        elkCmdFlags.fromFile, err = islazy.ResolveFullPath(elkCmdFlags.fromFile)
+        elkCmdFlags.fromFile, err = resolver.ResolveFullPath(elkCmdFlags.fromFile)
         if err != nil {
             return err
         }

@@ -14,6 +14,7 @@ import (
     "github.com/helviojunior/intelparser/pkg/log"
     "github.com/helviojunior/intelparser/pkg/downloaders"
     "github.com/helviojunior/intelparser/pkg/readers"
+    resolver "github.com/helviojunior/gopathresolver"
     "github.com/spf13/cobra"
 )
 
@@ -86,7 +87,7 @@ or by setting the IXAPIKEY environment variable.
         }
 
         // Check if search term is a file path
-        fileTerm, err := islazy.ResolveFullPath(searchTerm)
+        fileTerm, err := resolver.ResolveFullPath(searchTerm)
         if err == nil {
             
           ft, err := islazy.FileType(fileTerm)
@@ -128,7 +129,7 @@ or by setting the IXAPIKEY environment variable.
 
             log.Infof("Quering term %s", term)
 
-            zipFile, err := islazy.ResolveFullPath(fmt.Sprintf("./ix_%s_%s.zip", islazy.SafeFileName(term), startTime.Format("2006-02-01_15-04-05")))
+            zipFile, err := resolver.ResolveFullPath(fmt.Sprintf("./ix_%s_%s.zip", islazy.SafeFileName(term), startTime.Format("2006-02-01_15-04-05")))
             if err != nil {
                 log.Error("Error setting output file", "err", err)
                 os.Exit(2)

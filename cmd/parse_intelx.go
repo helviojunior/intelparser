@@ -18,6 +18,7 @@ import (
     //"github.com/helviojunior/intelparser/pkg/writers"
     "github.com/helviojunior/intelparser/pkg/readers"
     parsers "github.com/helviojunior/intelparser/pkg/runner/parsers"
+    resolver "github.com/helviojunior/gopathresolver"
     //"gorm.io/gorm"
     "github.com/spf13/cobra"
 )
@@ -115,7 +116,7 @@ Parse IntelX downloaded files (ZIP or folder).
             return errors.New("ZIP file or path is not readable")
         }
 
-        intelxCmdOptions.Path, err = islazy.ResolveFullPath(intelxCmdOptions.Path)
+        intelxCmdOptions.Path, err = resolver.ResolveFullPath(intelxCmdOptions.Path)
         if err != nil {
             return err
         }

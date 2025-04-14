@@ -14,7 +14,6 @@ import (
 	"github.com/helviojunior/intelparser/internal/ascii"
 	"github.com/helviojunior/intelparser/pkg/log"
 	"github.com/helviojunior/intelparser/pkg/runner"
-	resolver "github.com/helviojunior/gopathresolver"
 	"github.com/spf13/cobra"
 )
 

@@ -14,6 +14,7 @@ import (
     "github.com/helviojunior/intelparser/internal/islazy"
     "github.com/helviojunior/intelparser/pkg/log"
     "github.com/helviojunior/intelparser/pkg/writers"
+    resolver "github.com/helviojunior/gopathresolver"
     "github.com/spf13/cobra"
 )
 
@@ -51,12 +52,12 @@ target.`)),
             return errors.New("to file not set")
         }
 
-        convertCmdFlags.fromFile, err = islazy.ResolveFullPath(convertCmdFlags.fromFile)
+        convertCmdFlags.fromFile, err = resolver.ResolveFullPath(convertCmdFlags.fromFile)
         if err != nil {
             return err
         }
 
-        convertCmdFlags.toFile, err = islazy.ResolveFullPath(convertCmdFlags.toFile)
+        convertCmdFlags.toFile, err = resolver.ResolveFullPath(convertCmdFlags.toFile)
         if err != nil {
             return err
         }
