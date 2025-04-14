@@ -10,7 +10,7 @@ import (
 	"os/signal"
     "syscall"
 
-	"github.com/helviojunior/intelparser/internal/islazy"
+	"github.com/helviojunior/intelparser/internal/tools"
 	"github.com/helviojunior/intelparser/internal/ascii"
 	"github.com/helviojunior/intelparser/pkg/log"
 	"github.com/helviojunior/intelparser/pkg/runner"
@@ -52,7 +52,7 @@ var rootCmd = &cobra.Command{
 
 		if opts.Logging.TextFile != "" {
 			// check if the destination exists, if not, create it
-		    dst, err := islazy.CreateFileWithDir(opts.Logging.TextFile)
+		    dst, err := tools.CreateFileWithDir(opts.Logging.TextFile)
 		    if err != nil {
 		        return err
 		    }

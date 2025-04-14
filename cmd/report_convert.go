@@ -11,7 +11,7 @@ import (
     "os"
 
     "github.com/helviojunior/intelparser/internal/ascii"
-    "github.com/helviojunior/intelparser/internal/islazy"
+    "github.com/helviojunior/intelparser/internal/tools"
     "github.com/helviojunior/intelparser/pkg/log"
     "github.com/helviojunior/intelparser/pkg/writers"
     resolver "github.com/helviojunior/gopathresolver"
@@ -77,10 +77,10 @@ target.`)),
             return errors.New("source and destination files cannot be the same")
         }
 
-        if !islazy.SliceHasStr(conversionCmdExtensions, convertCmdFlags.fromExt) {
+        if !tools.SliceHasStr(conversionCmdExtensions, convertCmdFlags.fromExt) {
             return errors.New("unsupported from file type")
         }
-        if !islazy.SliceHasStr(conversionCmdExtensions, convertCmdFlags.toExt) {
+        if !tools.SliceHasStr(conversionCmdExtensions, convertCmdFlags.toExt) {
             return errors.New("unsupported to file type")
         }
 
@@ -99,7 +99,7 @@ target.`)),
                 return
             }
         } else if convertCmdFlags.toExt == ".jsonl" {
-            toFile, err := islazy.CreateFileWithDir(convertCmdFlags.toFile)
+            toFile, err := tools.CreateFileWithDir(convertCmdFlags.toFile)
             if err != nil {
                 log.Error("could not create target file", "err", err)
                 return
@@ -167,10 +167,10 @@ target.`)),
 
         log.Infof(st, 
             out.Format("15:04:05"),
-            islazy.FormatIntComma(status.Converted), 
-            islazy.FormatIntComma(status.Credential),
-            islazy.FormatIntComma(status.Url),
-            islazy.FormatIntComma(status.Email),
+            tools.FormatIntComma(status.Converted), 
+            tools.FormatIntComma(status.Credential),
+            tools.FormatIntComma(status.Url),
+            tools.FormatIntComma(status.Email),
         )
 
     },

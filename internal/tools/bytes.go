@@ -1,4 +1,4 @@
-package islazy
+package tools
 
 //Source https://github.com/dustin/go-humanize/blob/master/bytes.go
 

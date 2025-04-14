@@ -10,7 +10,7 @@ import (
     "strings"
 
     "github.com/helviojunior/intelparser/internal/ascii"
-    "github.com/helviojunior/intelparser/internal/islazy"
+    "github.com/helviojunior/intelparser/internal/tools"
     "github.com/helviojunior/intelparser/internal/disk"
     "github.com/helviojunior/intelparser/pkg/log"
     "github.com/helviojunior/intelparser/pkg/runner"
@@ -31,7 +31,7 @@ func AddZipFile(temp_folder string, file_path string) error {
     logger := log.With("file", file_name)
 
     logger.Debug("Checking file")
-    if mime, err = islazy.GetMimeType(file_path); err != nil {
+    if mime, err = tools.GetMimeType(file_path); err != nil {
         logger.Debug("Error getting mime type", "err", err)
         return err
     }
@@ -41,12 +41,12 @@ func AddZipFile(temp_folder string, file_path string) error {
         return errors.New("invalid file type")
     }
 
-    if dst, err = islazy.CreateDirFromFilename(temp_folder, file_path); err != nil {
+    if dst, err = tools.CreateDirFromFilename(temp_folder, file_path); err != nil {
         logger.Debug("Error creating temp folder to extract zip file", "err", err)
         return err
     }
 
-    if err = islazy.Unzip(file_path, dst); err != nil {
+    if err = tools.Unzip(file_path, dst); err != nil {
         logger.Debug("Error extracting zip file", "temp_folder", dst, "err", err)
         return err
     }
@@ -65,7 +65,7 @@ func AddFolder(temp_folder string, folder_path string, zip_source string) error 
  
     log.Debug("Checking folder", "path", folder_path)
     info := filepath.Join(folder_path, "Info.csv")
-    if !islazy.FileExists(info) {
+    if !tools.FileExists(info) {
         return errors.New("File 'Info.csv' not found") 
     }
 
@@ -112,7 +112,7 @@ Parse IntelX downloaded files (ZIP or folder).
             return errors.New("a ZIP file or path must be specified")
         }
 
-        if intelxCmdOptions.Path != "" && !islazy.FileExists(intelxCmdOptions.Path) {
+        if intelxCmdOptions.Path != "" && !tools.FileExists(intelxCmdOptions.Path) {
             return errors.New("ZIP file or path is not readable")
         }
 
@@ -142,7 +142,7 @@ Parse IntelX downloaded files (ZIP or folder).
         var ft string
         var err error
 
-        if ft, err = islazy.FileType(intelxCmdOptions.Path); err != nil {
+        if ft, err = tools.FileType(intelxCmdOptions.Path); err != nil {
             log.Error("error getting path type", "err", err)
             os.Exit(2)
         }
@@ -168,7 +168,7 @@ Parse IntelX downloaded files (ZIP or folder).
                 //Directory
 
                 info := filepath.Join(intelxCmdOptions.Path, "Info.csv")
-                if islazy.FileExists(info) {
+                if tools.FileExists(info) {
                     
                     if err = AddFolder(tempFolder, intelxCmdOptions.Path, ""); err != nil {
                         log.Error("error", "err", err)
@@ -228,15 +228,15 @@ Parse IntelX downloaded files (ZIP or folder).
 
         log.Warnf(st, 
             out.Format("15:04:05"),
-            islazy.FormatIntComma(status.Parsed), 
-            islazy.FormatIntComma(status.Skipped),
-            islazy.FormatIntComma(status.Error),
-            islazy.FormatIntComma(status.Credential),
-            islazy.FormatIntComma(status.Url),
-            islazy.FormatIntComma(status.Email),
+            tools.FormatIntComma(status.Parsed), 
+            tools.FormatIntComma(status.Skipped),
+            tools.FormatIntComma(status.Error),
+            tools.FormatIntComma(status.Credential),
+            tools.FormatIntComma(status.Url),
+            tools.FormatIntComma(status.Email),
         )
 
-        islazy.RemoveFolder(tempFolder)
+        tools.RemoveFolder(tempFolder)
 
     },
 }

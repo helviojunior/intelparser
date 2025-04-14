@@ -8,7 +8,7 @@ import (
     "time"
 
     "github.com/helviojunior/intelparser/internal/ascii"
-    "github.com/helviojunior/intelparser/internal/islazy"
+    "github.com/helviojunior/intelparser/internal/tools"
     "github.com/helviojunior/intelparser/pkg/log"
     "github.com/helviojunior/intelparser/pkg/writers"
     resolver "github.com/helviojunior/gopathresolver"
@@ -53,7 +53,7 @@ A --from-file and --elasticsearch-uri must be specified.`)),
             return errors.New("source file must have extension")
         }
 
-        if !islazy.SliceHasStr(elkCmdExtensions, elkCmdFlags.fromExt) {
+        if !tools.SliceHasStr(elkCmdExtensions, elkCmdFlags.fromExt) {
             return errors.New("unsupported from file type")
         }
 
@@ -122,10 +122,10 @@ A --from-file and --elasticsearch-uri must be specified.`)),
 
         log.Infof(st, 
             out.Format("15:04:05"),
-            islazy.FormatIntComma(status.Converted), 
-            islazy.FormatIntComma(status.Credential),
-            islazy.FormatIntComma(status.Url),
-            islazy.FormatIntComma(status.Email),
+            tools.FormatIntComma(status.Converted), 
+            tools.FormatIntComma(status.Credential),
+            tools.FormatIntComma(status.Url),
+            tools.FormatIntComma(status.Email),
         )
 
     },

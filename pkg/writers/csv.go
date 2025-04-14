@@ -6,7 +6,7 @@ import (
 	"os"
 	"reflect"
 
-	"github.com/helviojunior/intelparser/internal/islazy"
+	"github.com/helviojunior/intelparser/internal/tools"
 	"github.com/helviojunior/intelparser/pkg/models"
 )
 
@@ -21,7 +21,7 @@ type CsvWriter struct {
 
 // NewCsvWriter gets a new CsvWriter
 func NewCsvWriter(destination string) (*CsvWriter, error) {
-	p, err := islazy.CreateFileWithDir(destination)
+	p, err := tools.CreateFileWithDir(destination)
 	if err != nil {
 		return nil, err
 	}
@@ -63,7 +63,7 @@ func (cw *CsvWriter) Write(result *models.File) error {
 	var values []string
 	for i := 0; i < numField; i++ {
 		// skip excluded fields
-		if islazy.SliceHasStr(csvExludedFields, val.Type().Field(i).Name) {
+		if tools.SliceHasStr(csvExludedFields, val.Type().Field(i).Name) {
 			continue
 		}
 
@@ -86,7 +86,7 @@ func csvHeaders() []string {
 	var fieldNames []string
 	for i := 0; i < numField; i++ {
 		// skip excluded fields
-		if islazy.SliceHasStr(csvExludedFields, val.Type().Field(i).Name) {
+		if tools.SliceHasStr(csvExludedFields, val.Type().Field(i).Name) {
 			continue
 		}
 

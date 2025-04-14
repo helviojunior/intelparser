@@ -21,7 +21,7 @@ import (
 	"slices"
 	"sync"
 
-	"github.com/helviojunior/intelparser/internal/islazy"
+	"github.com/helviojunior/intelparser/internal/tools"
 	"github.com/helviojunior/intelparser/pkg/models"
 	"github.com/helviojunior/intelparser/pkg/runner"
 	"github.com/helviojunior/intelparser/pkg/database"
@@ -107,8 +107,8 @@ func (run *IntelxParser) ParseFile(thisRunner *runner.Runner, file_path string) 
 	}
 
 	file_name := strings.TrimSuffix(file_name_ext, filepath.Ext(file_name_ext))
-	result.Fingerprint, _ = islazy.GetHashFromFile(file_path)
-	result.MIMEType, _ = islazy.GetMimeType(file_path)
+	result.Fingerprint, _ = tools.GetHashFromFile(file_path)
+	result.MIMEType, _ = tools.GetMimeType(file_path)
 
 	if run.conn != nil {
 		response := run.conn.Raw("SELECT count(id) as count from files WHERE failed = 0 AND file_name = ? AND fingerprint = ?", file_name_ext, result.Fingerprint)
@@ -152,7 +152,7 @@ func (run *IntelxParser) ParseFile(thisRunner *runner.Runner, file_path string) 
 	//Check if we must save the file content
 	if run.MustSaveContent(result) { //&& result.MIMEType == "text/plain" {
 		logger.Debug("saving file content")
-		result.Content, _ = islazy.ReadTextFile(result.FilePath)
+		result.Content, _ = tools.ReadTextFile(result.FilePath)
 	}
 
 	return result, nil

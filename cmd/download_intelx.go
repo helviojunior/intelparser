@@ -10,7 +10,7 @@ import (
 
     "github.com/gofrs/uuid"
     "github.com/helviojunior/intelparser/internal/ascii"
-    "github.com/helviojunior/intelparser/internal/islazy"
+    "github.com/helviojunior/intelparser/internal/tools"
     "github.com/helviojunior/intelparser/pkg/log"
     "github.com/helviojunior/intelparser/pkg/downloaders"
     "github.com/helviojunior/intelparser/pkg/readers"
@@ -90,7 +90,7 @@ or by setting the IXAPIKEY environment variable.
         fileTerm, err := resolver.ResolveFullPath(searchTerm)
         if err == nil {
             
-          ft, err := islazy.FileType(fileTerm)
+          ft, err := tools.FileType(fileTerm)
           if err == nil {
               if ft != "file" {
                  log.Error("Search term must be a single text or file path")
@@ -129,7 +129,7 @@ or by setting the IXAPIKEY environment variable.
 
             log.Infof("Quering term %s", term)
 
-            zipFile, err := resolver.ResolveFullPath(fmt.Sprintf("./ix_%s_%s.zip", islazy.SafeFileName(term), startTime.Format("2006-02-01_15-04-05")))
+            zipFile, err := resolver.ResolveFullPath(fmt.Sprintf("./ix_%s_%s.zip", tools.SafeFileName(term), startTime.Format("2006-02-01_15-04-05")))
             if err != nil {
                 log.Error("Error setting output file", "err", err)
                 os.Exit(2)
@@ -168,10 +168,10 @@ or by setting the IXAPIKEY environment variable.
 
         log.Infof(st, 
             out.Format("15:04:05"),
-            islazy.FormatIntComma(status.TotalFiles), 
-            islazy.FormatIntComma(status.Duplicated),
-            islazy.FormatIntComma(status.Downloaded),
-            islazy.Bytes(uint64(status.TotalBytes)),
+            tools.FormatIntComma(status.TotalFiles), 
+            tools.FormatIntComma(status.Duplicated),
+            tools.FormatIntComma(status.Downloaded),
+            tools.Bytes(uint64(status.TotalBytes)),
         )
 
     },

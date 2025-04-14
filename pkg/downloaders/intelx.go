@@ -19,7 +19,7 @@ import (
 	"github.com/gofrs/uuid"
 
     "github.com/helviojunior/intelparser/internal/ascii"
-    "github.com/helviojunior/intelparser/internal/islazy"
+    "github.com/helviojunior/intelparser/internal/tools"
     "github.com/helviojunior/intelparser/pkg/database"
     "github.com/helviojunior/intelparser/pkg/ixapi"
     "github.com/helviojunior/intelparser/pkg/log"
@@ -72,7 +72,7 @@ func (st *IntelXDownloaderStatus) Print() {
     	st.TotalFiles, 
     	st.Downloaded, 
     	st.Duplicated, 
-    	islazy.HumanateBytes(uint64(st.TotalBytes + st.StateBytes), 1000, byteSizes),
+    	tools.HumanateBytes(uint64(st.TotalBytes + st.StateBytes), 1000, byteSizes),
     )
 	
 } 
@@ -86,7 +86,7 @@ func (st *IntelXDownloaderStatus) Clear() {
 }
 
 func NewIntelXDownloader(term string, apiKey string, outZipFile string) (*IntelXDownloader, error) {
-    tempFolder, err := islazy.CreateDir(islazy.TempFileName("", "intelparser_", ""))
+    tempFolder, err := tools.CreateDir(tools.TempFileName("", "intelparser_", ""))
     if err != nil {
         return nil, err
     }
@@ -218,7 +218,7 @@ func (dwn *IntelXDownloader) Run() *IntelXDownloaderStatus {
 	    zipWriter.Close()
 	}
 
-    islazy.RemoveFolder(dwn.tempFolder)
+    tools.RemoveFolder(dwn.tempFolder)
 	
 	return dwn.status
 }
@@ -251,7 +251,7 @@ func (dwn *IntelXDownloader) WriteInfoCsv() error {
 	var fieldNames []string
 	for i := 0; i < numField; i++ {
 		// skip excluded fields
-		if islazy.SliceHasStr(csvExludedFields, val.Type().Field(i).Name) {
+		if tools.SliceHasStr(csvExludedFields, val.Type().Field(i).Name) {
 			continue
 		}
 
@@ -285,7 +285,7 @@ func (dwn *IntelXDownloader) WriteInfoCsv() error {
 		var values []string
 		for i := 0; i < numField; i++ {
 			// skip excluded fields
-			if islazy.SliceHasStr(csvExludedFields, val.Type().Field(i).Name) {
+			if tools.SliceHasStr(csvExludedFields, val.Type().Field(i).Name) {
 				continue
 			}
 
@@ -316,13 +316,13 @@ func (dwn *IntelXDownloader) ClearScreen() {
 func (dwn *IntelXDownloader) DownloadResult(api *ixapi.IntelligenceXAPI, searchID uuid.UUID, Limit int) error {
 	logger := log.With("searchID", searchID.String())
 
-	tmpDwn, err := islazy.CreateDirFromFilename(dwn.tempFolder, "tmp_zip1_" + searchID.String())
+	tmpDwn, err := tools.CreateDirFromFilename(dwn.tempFolder, "tmp_zip1_" + searchID.String())
 	if err != nil {
         logger.Debug("Error creating temp folder to download zip file", "err", err)
         return err
     }
 
-	fileName := filepath.Join(tmpDwn, islazy.SafeFileName(searchID.String()) + ".zip")
+	fileName := filepath.Join(tmpDwn, tools.SafeFileName(searchID.String()) + ".zip")
 
 	err = api.DownloadZip(dwn.ctx, searchID, Limit, fileName)
 	if err != nil {
@@ -332,7 +332,7 @@ func (dwn *IntelXDownloader) DownloadResult(api *ixapi.IntelligenceXAPI, searchI
 
 	logger.Debug("Checking downloaded file")
 	var mime string
-    if mime, err = islazy.GetMimeType(fileName); err != nil {
+    if mime, err = tools.GetMimeType(fileName); err != nil {
         logger.Debug("Error getting mime type", "err", err)
         return err
     }
@@ -343,16 +343,16 @@ func (dwn *IntelXDownloader) DownloadResult(api *ixapi.IntelligenceXAPI, searchI
     }
 
     var dst string
-    if dst, err = islazy.CreateDirFromFilename(dwn.tempFolder, fileName); err != nil {
+    if dst, err = tools.CreateDirFromFilename(dwn.tempFolder, fileName); err != nil {
         logger.Debug("Error creating temp folder to extract zip file", "err", err)
         return err
     }
 
-    if err = islazy.Unzip(fileName, dst); err != nil {
+    if err = tools.Unzip(fileName, dst); err != nil {
         logger.Debug("Error extracting zip file", "temp_folder", dst, "err", err)
         return err
     }
-    islazy.RemoveFolder(tmpDwn)
+    tools.RemoveFolder(tmpDwn)
 
     entries, err := os.ReadDir(dst)
     if err != nil {
@@ -374,7 +374,7 @@ func (dwn *IntelXDownloader) DownloadResult(api *ixapi.IntelligenceXAPI, searchI
         }
     }
 
-    islazy.RemoveFolder(dst)
+    tools.RemoveFolder(dst)
 
 	return nil
 }

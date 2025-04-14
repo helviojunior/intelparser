@@ -4,7 +4,7 @@ import (
     "os"
 
     "github.com/helviojunior/intelparser/internal/ascii"
-    "github.com/helviojunior/intelparser/internal/islazy"
+    "github.com/helviojunior/intelparser/internal/tools"
     "github.com/helviojunior/intelparser/pkg/log"
     "github.com/helviojunior/intelparser/pkg/runner"
     //"github.com/helviojunior/intelparser/pkg/database"
@@ -42,13 +42,13 @@ var parserCmd = &cobra.Command{
 
         opts.Writer.GlobalDbURI = "sqlite:///"+ opts.Writer.UserPath + "/.intelparser.db"
 
-        if tempFolder, err = islazy.CreateDir(islazy.TempFileName("", "intelparser_", "")); err != nil {
+        if tempFolder, err = tools.CreateDir(tools.TempFileName("", "intelparser_", "")); err != nil {
             log.Error("error creatting temp folder", "err", err)
             os.Exit(2)
         }
 
         if opts.Writer.NoControlDb {
-            opts.Writer.GlobalDbURI = "sqlite:///"+ islazy.TempFileName(tempFolder, "intelparser_", ".db")
+            opts.Writer.GlobalDbURI = "sqlite:///"+ tools.TempFileName(tempFolder, "intelparser_", ".db")
         }
 
         //The first one is the general writer (global user)
