@@ -210,6 +210,9 @@ func MoveFile(sourcePath, destPath string) error {
 }
 
 func RemoveFolder(path string) error {
+	if path == "" {
+		return nil
+	}
 
 	fi, err := os.Stat(path)
 
