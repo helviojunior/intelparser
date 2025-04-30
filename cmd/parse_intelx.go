@@ -81,7 +81,7 @@ func AddFolder(temp_folder string, folder_path string, zip_source string) error 
     }
 
     for _, e := range entries {
-        if e.Name() != "Info.csv" {
+        if e.Name() != "Info.csv" && e.Name() != "info.sqlite3" {
             scanRunner.Files <- filepath.Join(folder_path, e.Name())
         }
     }
