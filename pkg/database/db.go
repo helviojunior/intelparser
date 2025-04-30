@@ -74,6 +74,7 @@ func Connection(uri string, shouldExist, debug bool) (*gorm.DB, error) {
 		&models.URL{},
 		&models.Email{},
 		&models.Credential{},
+		&Application{},
 	); err != nil {
 		return nil, err
 	}
