@@ -44,5 +44,5 @@ func (dw *DbWriter) Write(result *models.File) error {
 	if _, ok := dw.conn.Statement.Clauses["ON CONFLICT"]; !ok {
 		dw.conn = dw.conn.Clauses(clause.OnConflict{UpdateAll: true})
 	}
-	return dw.conn.CreateInBatches(result, 50).Error
+	return dw.conn.Session(&gorm.Session{CreateBatchSize: 50}).Create(result).Error
 }
