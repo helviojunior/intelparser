@@ -50,7 +50,6 @@ func Leak1() *Rule {
                 UrlDomain   : "",
                 Severity    : 100,
                 Entropy     : finding.Entropy,
-                NearText    : finding.Match,
             }
             return true, nil
         },

@@ -105,19 +105,19 @@ func getFilteredOnly(file models.File) *models.File {
     nf := file.Clone()
 
     for _, c := range file.Credentials {
-        if containsFilterWord(c.Username) || containsFilterWord(c.Url) || containsFilterWord(c.Password) || containsFilterWord(c.NearText) {
+        if containsFilterWord(c.Username) || containsFilterWord(c.Url) || containsFilterWord(c.Password) {
             nf.Credentials = append(nf.Credentials, c)
         }
     }
 
     for _, eml := range file.Emails {
-        if containsFilterWord(eml.Email) || containsFilterWord(eml.NearText) {
+        if containsFilterWord(eml.Email) {
             nf.Emails = append(nf.Emails, eml)
         }
     }
 
     for _, u := range file.URLs {
-        if containsFilterWord(u.Url) || containsFilterWord(u.NearText) {
+        if containsFilterWord(u.Url) {
             nf.URLs = append(nf.URLs, u)
         }
     }
@@ -179,21 +179,21 @@ func convertFromDbTo(from string, writer writers.Writer, status *ConvStatus) err
 
         sql1 := "file_id == " + strconv.FormatUint(uint64(file.ID), 10)
 
-        sqlCred := sql1 + prepareSQL([]string{"username", "url", "password", "near_text"})
+        sqlCred := sql1 + prepareSQL([]string{"username", "url", "password"})
         rCred, err := conn.Model(&models.Credential{}).Where(sqlCred).Rows()
         defer rCred.Close()
         if err != nil {
             return err
         }
 
-        sqlEmail := sql1 + prepareSQL([]string{"email", "near_text"})
+        sqlEmail := sql1 + prepareSQL([]string{"email"})
         rEml, err := conn.Model(&models.Email{}).Where(sqlEmail).Rows()
         defer rEml.Close()
         if err != nil {
             return err
         }
 
-        sqlUrl := sql1 + prepareSQL([]string{"url", "near_text"})
+        sqlUrl := sql1 + prepareSQL([]string{"url"})
         rUrl, err := conn.Model(&models.URL{}).Where(sqlUrl).Rows()
         defer rUrl.Close()
         if err != nil {

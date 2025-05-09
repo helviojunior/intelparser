@@ -54,6 +54,7 @@ func Connection(uri string, shouldExist, debug bool) (*gorm.DB, error) {
 		}
 		c.Exec("PRAGMA foreign_keys = ON")
 		c.Exec("PRAGMA cache_size = 10000")
+		c.Exec("PRAGMA case_sensitive_like=OFF")
 	case "postgres":
 		c, err = gorm.Open(postgres.Open(uri), config)
 		if err != nil {

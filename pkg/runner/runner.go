@@ -824,7 +824,21 @@ func (run *Runner) detectRule(fragment Fragment, currentRaw string, r *rules.Rul
             continue
         }
 
+        //If all is OK, get near text
+
+        nearIndexStart := loc.startLineIndex - 200
+        if nearIndexStart < 0 {
+            nearIndexStart = 0
+        }
+        nearIndexEnd := loc.endLineIndex + 200
+        if nearIndexEnd > len(fragment.Raw) {
+            nearIndexEnd = len(fragment.Raw)
+        }
+
+        nearText := fragment.Raw[nearIndexStart:nearIndexEnd]
+
         if finding.Credential.Username != "" {
+            finding.Credential.NearText = nearText
             if finding.Credential.Url == "" {
                 //Check Domain deny list
                 if ok, _ := ContainsEmailDomainStopWord(finding.Credential.UserDomain); ok {  
@@ -834,12 +848,14 @@ func (run *Runner) detectRule(fragment Fragment, currentRaw string, r *rules.Rul
         }
 
         if finding.Email.Email != "" {
+            finding.Email.NearText = nearText
             if ok, _ := ContainsEmailDomainStopWord(finding.Email.Domain); ok {   
                 finding.Email.Email = ""
             }
         }
 
         if finding.Url.Url != "" {
+            finding.Url.NearText = nearText
             if ok, _ := ContainsUrlDomainStopWord(finding.Url.Domain); ok { 
                 finding.Url.Url = ""
             }
