@@ -129,7 +129,7 @@ or by setting the IXAPIKEY environment variable.
 
             log.Infof("Quering term %s", term)
 
-            zipFile, err := resolver.ResolveFullPath(fmt.Sprintf("./ix_%s_%s.zip", tools.SafeFileName(term), startTime.Format("2006-02-01_15-04-05")))
+            zipFile, err := resolver.ResolveFullPath(fmt.Sprintf("./ix_%s_%s.zip", tools.SafeFileName(term), startTime.Format("2006-01-02_15-04-05")))
             if err != nil {
                 log.Error("Error setting output file", "err", err)
                 os.Exit(2)
