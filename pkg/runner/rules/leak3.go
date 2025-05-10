@@ -9,18 +9,20 @@ import (
     //"fmt"
     //"errors"
 
+    //"github.com/helviojunior/intelparser/pkg/log"
+
     "github.com/helviojunior/intelparser/pkg/models"
 )
 
 func Leak3() *Rule {
-    var iRe = re.MustCompile(`(?i)(https?:\/\/[a-zA-Z0-9.-]+(?:\.[^\x00-\x1F\s\\,"'<: ]{2,})(?:\/[^\x00-\x1F\s\\,"'<: ]*)?)[: ]{1,3}([a-z0-9._-]+(@|%40)[a-z0-9.-]+\.[a-z]{2,}):([^\s\\]{3,})`)
+    var iRe = re.MustCompile(`(?i)(https?:\/\/[a-zA-Z0-9.-]+(?:\.[^\x00-\x1F\s\\,"'<: ]{2,})(?::[0-9]{2,5})?(?:\/[^\x00-\x1F\s\\,"'<: ]*)?)[: ]{1,3}([^\s\\]{3,}):([^\s\\]{3,})`)
     // define rule
     r := &Rule{
-        RuleID:      "Leak3 » URL:Email:Pass",
-        Description: "Extract URL:Email:Pass leaks",
+        RuleID:      "Leak3 » URL:User:Pass",
+        Description: "Extract URL:User:Pass leaks",
         Regex:       iRe,
         Entropy:     0.91,
-        SecretGroup: 4,
+        SecretGroup: 3,
         Keywords:    []string{"http://", "https://"},
         CheckGlobalStopWord: false,
         PostProcessor : func(finding *models.Finding) (bool, error) {
@@ -33,10 +35,10 @@ func Leak3() *Rule {
             var d1 string
 
             groups := iRe.FindStringSubmatch(finding.Line)
-            if len(groups) >= 4 {
+            if len(groups) >= 3 {
                u1 = groups[1]
                u2 = groups[2]
-               p1 = groups[4]
+               p1 = groups[3]
             }
 
             if strings.Contains(u2, "@") {
