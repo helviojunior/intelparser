@@ -216,6 +216,8 @@ func (dwn *IntelXDownloader) Run() *IntelXDownloaderStatus {
 
 	    }
 	    zipWriter.Close()
+
+	    log.Info("Leaks saved", "files", dwn.status.TotalFiles, "zip", dwn.ZipFile)
 	}
 
     tools.RemoveFolder(dwn.tempFolder)
