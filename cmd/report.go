@@ -25,6 +25,7 @@ type ConvStatus struct {
     Email int
     Credential int
     Spin string
+    IsTerminal bool
 }
 
 var rptFilter = ""
@@ -72,15 +73,22 @@ func init() {
 }
 
 func (st *ConvStatus) Print() { 
-    st.Spin = ascii.GetNextSpinner(st.Spin)
+    if st.IsTerminal {
+        st.Spin = ascii.GetNextSpinner(st.Spin)
 
-    fmt.Fprintf(os.Stderr, "%s\n %s converted %d: cred: %d, url: %d, email: %d\r\033[A", 
-        "                                                                        ",
-        ascii.ColoredSpin(st.Spin), 
-        st.Converted, 
-        st.Credential, 
-        st.Url, 
-        st.Email)
+        fmt.Fprintf(os.Stderr, "%s\n %s converted %d: cred: %d, url: %d, email: %d\r\033[A", 
+            "                                                                        ",
+            ascii.ColoredSpin(st.Spin), 
+            st.Converted, 
+            st.Credential, 
+            st.Url, 
+            st.Email)
+
+    }else{
+        log.Info("STATUS", 
+            "converted", st.Converted,
+            "creds", st.Credential, "url", st.Url, "email", st.Email)
+    }
 } 
 
 func containsFilterWord(s string) bool {

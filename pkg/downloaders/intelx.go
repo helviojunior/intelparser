@@ -18,6 +18,8 @@ import (
 
 	"github.com/gofrs/uuid"
 
+    tty "golang.org/x/term"
+
     "github.com/helviojunior/intelparser/internal/ascii"
     "github.com/helviojunior/intelparser/internal/tools"
     "github.com/helviojunior/intelparser/pkg/database"
@@ -60,21 +62,27 @@ type IntelXDownloaderStatus struct {
 	Spin string
 	Step string
 	Running bool
+    IsTerminal bool
 }
 
 func (st *IntelXDownloaderStatus) Print() { 
-	st.Spin = ascii.GetNextSpinner(st.Spin)
+	if st.IsTerminal {
+		st.Spin = ascii.GetNextSpinner(st.Spin)
 
-	fmt.Fprintf(os.Stderr, "%s\n %s %s, reg.: %d, downloaded: %d, dup.: %d, bytes: %s               \r\033[A", 
-    	"                                                                        ",
-    	ascii.ColoredSpin(st.Spin), 
-    	st.Step, 
-    	st.TotalFiles, 
-    	st.Downloaded, 
-    	st.Duplicated, 
-    	tools.HumanateBytes(uint64(st.TotalBytes + st.StateBytes), 1000, byteSizes),
-    )
-	
+		fmt.Fprintf(os.Stderr, "%s\n %s %s, reg.: %d, downloaded: %d, dup.: %d, bytes: %s               \r\033[A", 
+	    	"                                                                        ",
+	    	ascii.ColoredSpin(st.Spin), 
+	    	st.Step, 
+	    	st.TotalFiles, 
+	    	st.Downloaded, 
+	    	st.Duplicated, 
+	    	tools.HumanateBytes(uint64(st.TotalBytes + st.StateBytes), 1000, byteSizes),
+	    )
+	 }else{
+        log.Info("STATUS", 
+            "step", st.Step, "total", st.TotalFiles, "downloaded", st.Downloaded, 
+            "duplicated", st.Duplicated, "bytes", tools.HumanateBytes(uint64(st.TotalBytes + st.StateBytes), 1000, byteSizes))
+    }
 } 
 
 func (st *IntelXDownloaderStatus) Clear() { 
@@ -129,6 +137,7 @@ func NewIntelXDownloader(term string, apiKey string, outZipFile string) (*IntelX
 			Spin: "",
 			Step: "",
 			Running: true,
+            IsTerminal: tty.IsTerminal(int(os.Stdin.Fd())),
 		},
 	}, nil
 }
@@ -146,7 +155,11 @@ func (dwn *IntelXDownloader) Run() *IntelXDownloaderStatus {
 					return
 				default:
 		        	dwn.status.Print()
-		        	time.Sleep(time.Duration(time.Second/4))
+		        	if dwn.status.IsTerminal {
+                        time.Sleep(time.Duration(time.Second / 4))
+                    }else{
+                        time.Sleep(time.Duration(time.Second * 10))
+                    }
 		    }
         }
     }()

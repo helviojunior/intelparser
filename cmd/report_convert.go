@@ -10,6 +10,8 @@ import (
     "strings"
     "os"
 
+    "golang.org/x/term"
+
     "github.com/helviojunior/intelparser/internal/ascii"
     "github.com/helviojunior/intelparser/internal/tools"
     "github.com/helviojunior/intelparser/pkg/log"
@@ -117,6 +119,7 @@ target.`)),
             Email: 0,
             Credential: 0,
             Spin: "",
+            IsTerminal: term.IsTerminal(int(os.Stdin.Fd())),
         }
 
         running = true
@@ -125,7 +128,11 @@ target.`)),
             defer wg.Done()
             for running {
                 status.Print()
-                time.Sleep(time.Duration(time.Second/4))
+                if status.IsTerminal {
+                    time.Sleep(time.Duration(time.Second / 4))
+                }else{
+                    time.Sleep(time.Duration(time.Second * 10))
+                }
             }
         }()
 

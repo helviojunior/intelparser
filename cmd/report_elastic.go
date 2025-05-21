@@ -6,6 +6,9 @@ import (
     "strings"
     "sync"
     "time"
+    "os"
+
+    "golang.org/x/term"
 
     "github.com/helviojunior/intelparser/internal/ascii"
     "github.com/helviojunior/intelparser/internal/tools"
@@ -78,6 +81,7 @@ A --from-file and --elasticsearch-uri must be specified.`)),
             Email: 0,
             Credential: 0,
             Spin: "",
+            IsTerminal: term.IsTerminal(int(os.Stdin.Fd())),
         }
 
         running = true
@@ -86,7 +90,11 @@ A --from-file and --elasticsearch-uri must be specified.`)),
             defer wg.Done()
             for running {
                 status.Print()
-                time.Sleep(time.Duration(time.Second/4))
+                if status.IsTerminal {
+                    time.Sleep(time.Duration(time.Second / 4))
+                }else{
+                    time.Sleep(time.Duration(time.Second * 10))
+                }
             }
         }()
 

@@ -20,6 +20,8 @@ import (
     //"os/signal"
     //"syscall"
 
+    "golang.org/x/term"
+
 	"github.com/h2non/filetype"
 	"github.com/helviojunior/intelparser/internal/ascii"
 	"github.com/helviojunior/intelparser/pkg/models"
@@ -92,23 +94,31 @@ type Status struct {
 	Skipped int
 	Spin string
 	Running bool
+    IsTerminal bool
+    log *slog.Logger
 }
 
 func (st *Status) Print() { 
-	st.Spin = ascii.GetNextSpinner(st.Spin)
+    if st.IsTerminal {
+    	st.Spin = ascii.GetNextSpinner(st.Spin)
 
-	fmt.Fprintf(os.Stderr, 
-        "%s\n %s read: %d, failed: %d, ignored: %d               \n %s cred: %d, url: %d, email: %d\r\033[A\033[A", 
-    	"                                                                        ",
-    	ascii.ColoredSpin(st.Spin), 
-        st.Parsed, 
-        st.Error, 
-        st.Skipped, 
-        strings.Repeat(" ", 4 - len(st.Spin)),
-        st.Credential, 
-        st.Url, 
-        st.Email)
-	
+    	fmt.Fprintf(os.Stderr, 
+            "%s\n %s read: %d, failed: %d, ignored: %d               \n %s cred: %d, url: %d, email: %d\r\033[A\033[A", 
+        	"                                                                        ",
+        	ascii.ColoredSpin(st.Spin), 
+            st.Parsed, 
+            st.Error, 
+            st.Skipped, 
+            strings.Repeat(" ", 4 - len(st.Spin)),
+            st.Credential, 
+            st.Url, 
+            st.Email)
+    	
+    }else{
+        st.log.Info("STATUS", 
+            "read", st.Parsed, "failed", st.Error, "ignored", st.Skipped, 
+            "creds", st.Credential, "url", st.Url, "email", st.Email)
+    }
 } 
 
 func (st *Status) AddResult(result *models.File) { 
@@ -149,6 +159,8 @@ func NewRunner(logger *slog.Logger, parser ParserDriver, opts Options, writers [
 			Skipped: 0,
 			Spin: "",
 			Running: true,
+            IsTerminal: term.IsTerminal(int(os.Stdin.Fd())),
+            log: logger,
 		},
 	}, nil
 }
@@ -231,7 +243,11 @@ func (run *Runner) Run() Status {
 						return
 					default:
 			        	run.status.Print()
-			        	time.Sleep(time.Duration(time.Second/4))
+			        	if run.status.IsTerminal {
+                            time.Sleep(time.Duration(time.Second / 4))
+                        }else{
+                            time.Sleep(time.Duration(time.Second * 10))
+                        }
 			    }
 	        }
 	    }()
