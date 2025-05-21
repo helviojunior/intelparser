@@ -86,6 +86,10 @@ target.`)),
             return errors.New("unsupported to file type")
         }
 
+        if !tools.FileExists(convertCmdFlags.fromFile) {
+            return errors.New("Source file not found") 
+        }
+
         return nil
     },
     Run: func(cmd *cobra.Command, args []string) {

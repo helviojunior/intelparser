@@ -60,6 +60,10 @@ A --from-file and --elasticsearch-uri must be specified.`)),
             return errors.New("unsupported from file type")
         }
 
+        if !tools.FileExists(elkCmdFlags.fromFile) {
+            return errors.New("Source file not found") 
+        }
+
         return nil
     },
     Run: func(cmd *cobra.Command, args []string) {
