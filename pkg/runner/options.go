@@ -48,6 +48,8 @@ type Parser struct {
     // Threads (not really) are the number of goroutines to use.
     // More soecifically, its the go-rod page pool well use.
     Threads int
+    //Size of near text data
+    NearTextSize int
 }
 
 // NewDefaultOptions returns Options with some default values
@@ -56,10 +58,12 @@ func NewDefaultOptions() *Options {
         Parser: Parser{
             Path:             "invalid",
             Threads:          6,
+            NearTextSize:     50,
         },
         Logging: Logging{
             Debug:         true,
             LogScanErrors: true,
         },
+        
     }
 }

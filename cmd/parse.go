@@ -129,6 +129,8 @@ func init() {
     
     parserCmd.PersistentFlags().BoolVar(&opts.Writer.NoControlDb, "disable-control-db", false, "Disable utilization of database ~/.intelparser.db.")
 
+    parserCmd.PersistentFlags().IntVar(&opts.Parser.NearTextSize, "neartext-size", 50, "Defines how much data should be captured before and after the matching text segment")
+
     parserCmd.PersistentFlags().BoolVar(&opts.Writer.Db, "write-db", false, "Write results to a SQLite database")
     parserCmd.PersistentFlags().StringVar(&opts.Writer.DbURI, "write-db-uri", "sqlite:///intelparser.sqlite3", "The database URI to use. Supports SQLite, Postgres, and MySQL (e.g., postgres://user:pass@host:port/db)")
     parserCmd.PersistentFlags().BoolVar(&opts.Writer.DbDebug, "write-db-enable-debug", false, "Enable database query debug logging (warning: verbose!)")

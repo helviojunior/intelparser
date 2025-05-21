@@ -842,11 +842,14 @@ func (run *Runner) detectRule(fragment Fragment, currentRaw string, r *rules.Rul
 
         //If all is OK, get near text
 
-        nearIndexStart := loc.startLineIndex - 200
+        nearIndexStart := loc.startLineIndex - run.options.Parser.NearTextSize
         if nearIndexStart < 0 {
             nearIndexStart = 0
         }
-        nearIndexEnd := loc.endLineIndex + 200
+        nearIndexEnd := loc.endLineIndex + run.options.Parser.NearTextSize
+        if nearIndexEnd <= nearIndexStart {
+            nearIndexEnd += nearIndexStart + 1
+        }
         if nearIndexEnd > len(fragment.Raw) {
             nearIndexEnd = len(fragment.Raw)
         }
