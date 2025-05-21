@@ -720,9 +720,22 @@ func (run *Runner) detectRule(fragment Fragment, currentRaw string, r *rules.Rul
 		}
 	}
 
+    // Replace the main encoding chars
+    currentRaw = strings.Replace(currentRaw, "%40", "@", -1)
+    currentRaw = strings.Replace(currentRaw, "%20", " ", -1)
+    currentRaw = strings.Replace(currentRaw, "%22", "\"", -1)
+    currentRaw = strings.Replace(currentRaw, "%27", "'", -1)
+    currentRaw = strings.Replace(currentRaw, "%7b", "{", -1)
+    currentRaw = strings.Replace(currentRaw, "%7d", "}", -1)
+    currentRaw = strings.Replace(currentRaw, "%5b", "[", -1)
+    currentRaw = strings.Replace(currentRaw, "%0a", "\n", -1)
+    currentRaw = strings.Replace(currentRaw, "%0d", "\r", -1)
+    currentRaw = strings.Replace(currentRaw, "%09", "\t", -1)
+
 	// use currentRaw instead of fragment.Raw since this represents the current
 	// decoding pass on the text
-//MatchLoop:
+    //MatchLoop:
+
 	for _, matchIndex := range r.Regex.FindAllStringIndex(currentRaw, -1) {
 		// Extract secret from match
 		secret := strings.Trim(currentRaw[matchIndex[0]:matchIndex[1]], "\n\r\t")
