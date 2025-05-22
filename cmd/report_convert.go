@@ -135,7 +135,7 @@ target.`)),
                 if status.IsTerminal {
                     time.Sleep(time.Duration(time.Second / 4))
                 }else{
-                    time.Sleep(time.Duration(time.Second * 10))
+                    time.Sleep(time.Duration(time.Second * 30))
                 }
             }
         }()
