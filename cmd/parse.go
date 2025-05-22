@@ -2,6 +2,7 @@ package cmd
 
 import (
     "os"
+    "strings"
 
     "github.com/helviojunior/intelparser/internal/ascii"
     "github.com/helviojunior/intelparser/internal/tools"
@@ -10,6 +11,7 @@ import (
     //"github.com/helviojunior/intelparser/pkg/database"
     "github.com/helviojunior/intelparser/pkg/writers"
     //"github.com/helviojunior/intelparser/pkg/readers"
+    resolver "github.com/helviojunior/gopathresolver"
     //"gorm.io/gorm"
     "github.com/spf13/cobra"
 )
@@ -42,7 +44,12 @@ var parserCmd = &cobra.Command{
 
         opts.Writer.GlobalDbURI = "sqlite:///"+ opts.Writer.UserPath + "/.intelparser.db"
 
-        if tempFolder, err = tools.CreateDir(tools.TempFileName("", "intelparser_", "")); err != nil {
+        basePath := ""
+        if opts.StoreTempAsWorkspace {
+            basePath = "./"
+        }
+
+        if tempFolder, err = tools.CreateDir(tools.TempFileName(basePath, "intelparser_", "")); err != nil {
             log.Error("error creatting temp folder", "err", err)
             os.Exit(2)
         }
@@ -52,11 +59,11 @@ var parserCmd = &cobra.Command{
         }
 
         //The first one is the general writer (global user)
-        w, err := writers.NewDbWriter(opts.Writer.GlobalDbURI, false)
+        globalDbWriter, err := writers.NewDbWriter(opts.Writer.GlobalDbURI, false)
         if err != nil {
             return err
         }
-        scanWriters = append(scanWriters, w)
+        scanWriters = append(scanWriters, globalDbWriter)
 
         //The second one is the STDOut
         if opts.Logging.Silence != true && opts.Writer.None != true {
@@ -78,11 +85,27 @@ var parserCmd = &cobra.Command{
         }
 
         if opts.Writer.Db {
+
+            if strings.Contains(opts.Writer.DbURI, "sqlite://") {
+                fileName := strings.Replace(opts.Writer.DbURI, "sqlite:///", "", -1)
+                fileName = strings.Replace(fileName, "sqlite://", "", -1)
+
+                fp, err := resolver.ResolveFullPath(fileName)
+                if err != nil {
+                    return err
+                }
+
+                opts.Writer.DbURI = "sqlite:///" + fp
+            }
+
             w, err := writers.NewDbWriter(opts.Writer.DbURI, opts.Writer.DbDebug)
             if err != nil {
                 return err
             }
             scanWriters = append(scanWriters, w)
+
+            // As we have another Database, use the default one only to control database
+            globalDbWriter.ControlOnly = true
         }
 
         if opts.Writer.Csv {
@@ -128,7 +151,8 @@ func init() {
     parserCmd.PersistentFlags().IntVarP(&opts.Parser.Threads, "threads", "t", 10, "Number of concurrent threads (goroutines) to use")
     
     parserCmd.PersistentFlags().BoolVar(&opts.Writer.NoControlDb, "disable-control-db", false, "Disable utilization of database ~/.intelparser.db.")
-
+    parserCmd.PersistentFlags().BoolVar(&opts.StoreTempAsWorkspace, "local-temp", false, "Use execution path to store temp files")
+    
     parserCmd.PersistentFlags().IntVar(&opts.Parser.NearTextSize, "neartext-size", 50, "Defines how much data should be captured before and after the matching text segment")
 
     parserCmd.PersistentFlags().BoolVar(&opts.Writer.Db, "write-db", false, "Write results to a SQLite database")

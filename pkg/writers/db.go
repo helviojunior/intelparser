@@ -14,8 +14,10 @@ import (
 // DbWriter is a Database writer
 type DbWriter struct {
 	URI           string
+	ControlOnly   bool
 	conn          *gorm.DB
 	mutex         sync.Mutex
+
 }
 
 // NewDbWriter initialises a database writer
@@ -31,6 +33,7 @@ func NewDbWriter(uri string, debug bool) (*DbWriter, error) {
 
 	return &DbWriter{
 		URI:           uri,
+		ControlOnly:   false,
 		conn:          c,
 		mutex:         sync.Mutex{},
 	}, nil
@@ -40,6 +43,13 @@ func NewDbWriter(uri string, debug bool) (*DbWriter, error) {
 func (dw *DbWriter) Write(result *models.File) error {
 	dw.mutex.Lock()
 	defer dw.mutex.Unlock()
+
+	if dw.ControlOnly {
+		//Save onl
+		r1 := result.Clone()
+		r1.Content = ""
+		return dw.conn.Session(&gorm.Session{CreateBatchSize: 200}).Create(r1).Error
+	}
 
 	return dw.conn.Session(&gorm.Session{CreateBatchSize: 200}).Create(result).Error
 }

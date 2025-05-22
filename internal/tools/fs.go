@@ -16,6 +16,7 @@ import (
     "math/rand"
 	"archive/zip"
     
+    resolver "github.com/helviojunior/gopathresolver"
     "github.com/helviojunior/intelparser/pkg/log"
     "github.com/helviojunior/intelparser/internal/disk"
 )
@@ -149,7 +150,14 @@ func TempFileName(base_path, prefix, suffix string) string {
             }
         }
     }
-    return filepath.Join(base_path, prefix+hex.EncodeToString(randBytes)+suffix)
+
+    p1 := filepath.Join(base_path, prefix+hex.EncodeToString(randBytes)+suffix)
+    p2, err := resolver.ResolveFullPath(p1)
+    if err != nil {
+        return p1
+    }
+
+    return p2
 }
 
 // FileExists returns true if a path exists

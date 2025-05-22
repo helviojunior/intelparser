@@ -8,6 +8,12 @@ type Options struct {
     Writer Writer
     // Parser is typically Parser options
     Parser Parser
+
+    // Force use current path as Temp Path
+    StoreTempAsWorkspace bool
+
+    // Default DB as Control Only (ignore other tables)
+    DefaultDBAsControlOnly bool
 }
 
 // Logging is log related options
