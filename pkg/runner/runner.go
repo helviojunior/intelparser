@@ -731,7 +731,11 @@ func (run *Runner) detectRule(fragment Fragment, currentRaw string, r *rules.Rul
     currentRaw = strings.Replace(currentRaw, "%0a", "\n", -1)
     currentRaw = strings.Replace(currentRaw, "%0d", "\r", -1)
     currentRaw = strings.Replace(currentRaw, "%09", "\t", -1)
+    currentRaw = strings.Replace(currentRaw, "<br />", "\n", -1)
+    currentRaw = strings.Replace(currentRaw, "<br/>", "\n", -1)
+    currentRaw = strings.Replace(currentRaw, "<br>", "\n", -1)
 
+    
 	// use currentRaw instead of fragment.Raw since this represents the current
 	// decoding pass on the text
     //MatchLoop:

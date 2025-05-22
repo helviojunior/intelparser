@@ -15,7 +15,7 @@ import (
 )
 
 func Leak3() *Rule {
-    var iRe = re.MustCompile(`(?i)(https?:\/\/[a-zA-Z0-9.-]+(?:\.[^\x00-\x1F\s\\,"'<: ]{2,})(?::[0-9]{2,5})?(?:\/[^\x00-\x1F\s\\,"'<: ]*)?)[: ]{1,3}([^\s\\]{3,}):([^\s\\]{3,})`)
+    var iRe = re.MustCompile(`(?i)(https?:\/\/[a-zA-Z0-9.-]+(?:\.[^\x00-\x1F\s\\,"'<: ]{2,})(?::[0-9]{2,5})?(?:\/[^\x00-\x1F\s\\,"'<: ]*)?)[: ]{1,3}([a-z0-9.\\@%_-]{3,}):([^\s\\]{3,})`)
     // define rule
     r := &Rule{
         RuleID:      "Leak3 » URL:User:Pass",
