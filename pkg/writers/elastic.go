@@ -23,7 +23,7 @@ import (
 
 // fields in the main model to ignore
 var elkExludedFields = []string{"failed", "failed_reason", "near_text"}
-var elkBulkCount = 1000
+var elkBulkCount = 200
 var elkBulkMaxSize = 5 * 1024 * 1024
 
 // JsonWriter is a JSON lines writer
@@ -233,42 +233,16 @@ func NewElasticWriter(uri string) (*ElasticWriter, error) {
 
 // Write JSON lines to a file
 func (ew *ElasticWriter) Write(result *models.File) error {
+	var err error
 
-    creds := make([]models.Credential, len(result.Credentials))
-    copy(creds, result.Credentials)
-
-    emails := make([]models.Email, len(result.Emails))
-    copy(emails, result.Emails)
-
-    urls := make([]models.URL, len(result.URLs))
-    copy(urls, result.URLs)
-
-    result.Credentials = []models.Credential{}
-    result.Emails = []models.Email{}
-    result.URLs = []models.URL{}
-
-    logger.Debugf("Integrating elastic: %d credentials, %d e-mails, %d urls", len(creds), len(emails), len(urls))
-
-    //File
-	b_data, err := json.Marshal(*result) //ew.Marshal(*result)
-	if err != nil {
-	    return err
-	}
-
-	res, err := ew.Client.Index(ew.Index, bytes.NewReader(b_data), ew.Client.Index.WithDocumentID(result.Fingerprint))
-	if err != nil {
-	    return err
-	}
-	if res.StatusCode != 200 && res.StatusCode != 201 {
-		fmt.Printf("Err: %s", res)
-		return errors.New("Cannot create/update document")
-	}
+    logger.Debugf("Integrating elastic: %d credentials, %d e-mails, %d urls", 
+    	len(result.Credentials),  len(result.Emails), len(result.URLs))
 
 	docs := make(map[string][]byte)
 	docs_len := 0
 
 	//Credentials
-	for _, c := range creds {
+	for _, c := range result.Credentials {
 		b_data, err := json.Marshal(c)
 		if err != nil {
 		    return err
@@ -308,10 +282,9 @@ func (ew *ElasticWriter) Write(result *models.File) error {
 		}
 	}
 
-
 	//Urls
 	docs = make(map[string][]byte)
-	for _, u := range urls {
+	for _, u := range result.URLs {
 		b_data, err := json.Marshal(u)
 		if err != nil {
 		    return err
@@ -354,7 +327,7 @@ func (ew *ElasticWriter) Write(result *models.File) error {
 	//Emails
 	docs = make(map[string][]byte)
 	docs_len = 0
-	for _, eml := range emails {
+	for _, eml := range result.Emails {
 		b_data, err := json.Marshal(eml)
 		if err != nil {
 		    return err
@@ -392,6 +365,25 @@ func (ew *ElasticWriter) Write(result *models.File) error {
 		if err != nil {
 		    return err
 		}
+	}
+
+    //File
+    result.Credentials = []models.Credential{}
+    result.Emails = []models.Email{}
+    result.URLs = []models.URL{}
+
+	b_data, err := json.Marshal(*result) //ew.Marshal(*result)
+	if err != nil {
+	    return err
+	}
+
+	res, err := ew.Client.Index(ew.Index, bytes.NewReader(b_data), ew.Client.Index.WithDocumentID(result.Fingerprint))
+	if err != nil {
+	    return err
+	}
+	if res.StatusCode != 200 && res.StatusCode != 201 {
+		fmt.Printf("Err: %s", res)
+		return errors.New("Cannot create/update document")
 	}
 
 	return nil
