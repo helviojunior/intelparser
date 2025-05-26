@@ -184,6 +184,15 @@ target.`)),
             tools.FormatIntComma(status.Email),
         )
 
+        if (status.Credential + status.Url + status.Email) == 0 {
+            log.Warn("No records were converted. Cleaning up output file...")
+
+            err = os.Remove(convertCmdFlags.toFile)
+            if err != nil {
+                log.Debug("failed deleting file", "file", convertCmdFlags.toFile, "err", err)
+            }
+        }
+
     },
 }
 
