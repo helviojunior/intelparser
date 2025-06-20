@@ -167,6 +167,8 @@ func NewElasticWriter(uri string) (*ElasticWriter, error) {
                     "user_domain": {"type": "keyword"},
                     "username": {"type": "keyword"},
                     "password": {"type": "keyword"},
+                    "has_cpf": {"type": "keyword"},
+                    "cpf": {"type": "keyword"},
                     "url": {"type": "keyword"},
                     "url_domain": {"type": "keyword"},
                     "severity": {"type": "long"},

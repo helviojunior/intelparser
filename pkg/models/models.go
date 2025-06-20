@@ -74,6 +74,9 @@ type Credential struct {
 	Username    string      `json:"username"`
 	Password    string      `json:"password"`
 
+	HasCPF      bool        `json:"has_cpf"`
+	CPF         string      `json:"cpf"`
+
 	Url         string      `json:"url"`
 	UrlDomain	string      `json:"url_domain"`
 
@@ -192,6 +195,8 @@ func (cred Credential) MarshalJSON() ([]byte, error) {
 		UserDomain 	    	  string   	`json:"user_domain,omitempty"`
 		Username    		  string    `json:"username"`
 		Password	    	  string   	`json:"password"`
+		HasCPF      		  bool      `json:"has_cpf"`
+		CPF         		  string    `json:"cpf"`
 		Url 		    	  string   	`json:"url,omitempty"`
 		UrlDomain			  string    `json:"url_domain,omitempty"`
 		Severity	    	  int   	`json:"severity"`
@@ -204,6 +209,8 @@ func (cred Credential) MarshalJSON() ([]byte, error) {
 		UserDomain			: strings.ToLower(cred.UserDomain),
 		Username 			: cred.Username,
 		Password 			: cred.Password,
+		HasCPF 				: cred.HasCPF,
+		CPF 				: cred.CPF,
 		Url 				: cred.Url,
 		UrlDomain			: strings.ToLower(cred.UrlDomain),
 		Severity 			: cred.Severity,

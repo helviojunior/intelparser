@@ -16,6 +16,8 @@ import (
 
 func Leak3() *Rule {
     var iRe = re.MustCompile(`(?i)(https?:\/\/[a-zA-Z0-9.-]+(?:\.[^\x00-\x1F\s\\,"'<: ]{2,})(?::[0-9]{2,5})?(?:\/[^\x00-\x1F\s\\,"'<: ]*)?)[: ]{1,3}([a-z0-9.\\@%_-]{3,}):([^\s\\]{3,})`)
+    
+    
     // define rule
     r := &Rule{
         RuleID:      "Leak3 » URL:User:Pass",
@@ -36,12 +38,16 @@ func Leak3() *Rule {
 
             groups := iRe.FindStringSubmatch(finding.Line)
             if len(groups) >= 3 {
-               u1 = groups[1]
-               u2 = groups[2]
+               u1 = strings.Trim(groups[1], "\r\n ")
+               u2 = strings.Trim(groups[2], "\r\n ")
                p1 = groups[3]
             }
 
             if tools.SliceHasStr([]string{"http", "https", "include", "ftp"}, strings.ToLower(u2)){
+                return false, errors.New("Invalid submatch.")
+            }
+
+            if strings.Contains(strings.ToLower(u2), "http") {
                 return false, errors.New("Invalid submatch.")
             }
 
@@ -88,6 +94,17 @@ func Leak3() *Rule {
                 Url         : u1,
             }
 
+            hasCpf := false
+            cpf := ""
+            if ok, c := tools.ExtractCPF(u2); ok {
+                hasCpf = true
+                cpf = c
+            }
+            if ok, c := tools.ExtractCPF(p1); ok {
+                hasCpf = true
+                cpf = c
+            }
+
             finding.Credential = models.Credential{
                 Time        : time.Now(),
                 UserDomain  : d1,
@@ -97,6 +114,8 @@ func Leak3() *Rule {
                 Url         : u1,
                 Severity    : 100,
                 Entropy     : finding.Entropy,
+                HasCPF      : hasCpf,
+                CPF         : cpf,
             }
             return true, nil
         },
