@@ -11,6 +11,7 @@ import (
 	"errors"
 	"bytes"
 	"net/http"
+	"crypto/tls"
 	//"reflect"
 	//"io"
 
@@ -108,6 +109,7 @@ func NewElasticWriter(uri string) (*ElasticWriter, error) {
 			MaxIdleConns:       10,
 		    IdleConnTimeout:    10 * time.Second,
 		    DisableCompression: true,
+		    TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 		},
 	}
 
