@@ -71,10 +71,6 @@ target.`)),
             return errors.New("source and destination files must have extensions")
         }
 
-        if convertCmdFlags.fromExt == convertCmdFlags.toExt && len(filterList) == 0 {
-            return errors.New("👀 source and destination file types must be different")
-        }
-
         if convertCmdFlags.fromFile == convertCmdFlags.toFile {
             return errors.New("source and destination files cannot be the same")
         }

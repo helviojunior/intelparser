@@ -10,6 +10,7 @@ import (
     "regexp"
     "strconv"
     "sync"
+    "time"
 
     "github.com/helviojunior/intelparser/internal/ascii"
     "github.com/helviojunior/intelparser/pkg/database"
@@ -28,6 +29,7 @@ type ConvStatus struct {
     IsTerminal bool
 }
 
+var dateFilter = ""
 var rptFilter = ""
 var filterList = []string{}
 var reportCmd = &cobra.Command{
@@ -58,6 +60,18 @@ Work with intelparser reports.
             }
         }
         
+        layout := "2006-01-02"
+
+        t, err := time.Parse(layout, dateFilter)
+        if err != nil {
+            return err
+        }
+        opts.DateFilter = &t
+
+        if opts.DateFilter != nil {
+            log.Warn("Date filter (start-date): " + t.Format("2006-01-02"))
+        }
+
         if len(filterList) > 0 {
             log.Warn("Filter list: " + strings.Join(filterList, ", "))
         }
@@ -70,6 +84,7 @@ func init() {
     rootCmd.AddCommand(reportCmd)
 
     reportCmd.PersistentFlags().StringVar(&rptFilter, "filter", "", "Comma-separated terms to filter results")
+    reportCmd.PersistentFlags().StringVar(&dateFilter, "date-from", "", "Minimum date to convert. (Format: yyyy-mm-dd)")
 }
 
 func (st *ConvStatus) Print() { 
@@ -186,6 +201,9 @@ func convertFromDbTo(from string, writer writers.Writer, status *ConvStatus) err
         logger := log.With("id", file.ID, "file", file.FileName)
 
         sql1 := "file_id == " + strconv.FormatUint(uint64(file.ID), 10)
+        if opts.DateFilter != nil {
+            sql1 += " AND [time] >= '" + opts.DateFilter.Format("2006-01-02") + "' "
+        }
 
         sqlCred := sql1 + prepareSQL([]string{"username", "url", "password"})
         rCred, err := conn.Model(&models.Credential{}).Where(sqlCred).Rows()

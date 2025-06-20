@@ -1,5 +1,9 @@
 package runner
 
+import (
+    "time"
+)
+
 // Options are global github.com/helviojunior/intelparserintelparser options
 type Options struct {
     // Logging is logging options
@@ -14,6 +18,8 @@ type Options struct {
 
     // Default DB as Control Only (ignore other tables)
     DefaultDBAsControlOnly bool
+
+    DateFilter *time.Time
 }
 
 // Logging is log related options
