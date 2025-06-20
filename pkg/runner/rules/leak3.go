@@ -7,10 +7,10 @@ import (
     "net/url"
     "strings"
     //"fmt"
-    //"errors"
+    "errors"
 
     //"github.com/helviojunior/intelparser/pkg/log"
-
+    "github.com/helviojunior/intelparser/internal/tools"
     "github.com/helviojunior/intelparser/pkg/models"
 )
 
@@ -39,6 +39,10 @@ func Leak3() *Rule {
                u1 = groups[1]
                u2 = groups[2]
                p1 = groups[3]
+            }
+
+            if tools.SliceHasStr([]string{"http", "https", "include", "ftp"}, strings.ToLower(u2)){
+                return false, errors.New("Invalid submatch.")
             }
 
             if strings.Contains(u2, "@") {
