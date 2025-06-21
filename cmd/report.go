@@ -60,16 +60,16 @@ Work with intelparser reports.
             }
         }
         
-        layout := "2006-01-02"
-
-        t, err := time.Parse(layout, dateFilter)
-        if err != nil {
-            return err
+        if dateFilter != "" {
+            t, err := time.Parse("2006-01-02", dateFilter)
+            if err != nil {
+                return err
+            }
+            opts.DateFilter = &t
         }
-        opts.DateFilter = &t
 
         if opts.DateFilter != nil {
-            log.Warn("Date filter (start-date): " + t.Format("2006-01-02"))
+            log.Warn("Date filter (start-date): " + opts.DateFilter.Format("2006-01-02"))
         }
 
         if len(filterList) > 0 {
