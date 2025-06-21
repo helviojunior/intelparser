@@ -17,7 +17,7 @@ type DbWriter struct {
 	ControlOnly   bool
 	conn          *gorm.DB
 	mutex         sync.Mutex
-
+	ReadOnly      bool
 }
 
 // NewDbWriter initialises a database writer
@@ -36,11 +36,17 @@ func NewDbWriter(uri string, debug bool) (*DbWriter, error) {
 		ControlOnly:   false,
 		conn:          c,
 		mutex:         sync.Mutex{},
+		ReadOnly:      false,
 	}, nil
 }
 
 // Write results to the database
 func (dw *DbWriter) Write(result *models.File) error {
+
+	if dw.ReadOnly {
+		return nil
+	}
+
 	dw.mutex.Lock()
 	defer dw.mutex.Unlock()
 

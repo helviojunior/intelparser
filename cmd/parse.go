@@ -63,6 +63,7 @@ var parserCmd = &cobra.Command{
         if err != nil {
             return err
         }
+        globalDbWriter.ReadOnly = opts.Writer.NoControlDb
         scanWriters = append(scanWriters, globalDbWriter)
 
         //The second one is the STDOut
