@@ -45,8 +45,13 @@ var parserCmd = &cobra.Command{
         opts.Writer.GlobalDbURI = "sqlite:///"+ opts.Writer.UserPath + "/.intelparser.db"
 
         basePath := ""
-        if opts.StoreTempAsWorkspace {
+        if opts.StoreLocalWorkspace {
             basePath = "./"
+            fp, err := resolver.ResolveFullPath("./intelparser.db")
+            if err != nil {
+                return err
+            }
+            opts.Writer.GlobalDbURI = "sqlite:///"+ fp
         }
 
         if tempFolder, err = tools.CreateDir(tools.TempFileName(basePath, "intelparser_", "")); err != nil {
@@ -152,7 +157,7 @@ func init() {
     parserCmd.PersistentFlags().IntVarP(&opts.Parser.Threads, "threads", "t", 10, "Number of concurrent threads (goroutines) to use")
     
     parserCmd.PersistentFlags().BoolVar(&opts.Writer.NoControlDb, "disable-control-db", false, "Disable utilization of database ~/.intelparser.db.")
-    parserCmd.PersistentFlags().BoolVar(&opts.StoreTempAsWorkspace, "local-temp", false, "Use execution path to store temp files")
+    parserCmd.PersistentFlags().BoolVar(&opts.StoreLocalWorkspace, "local-workspace", false, "Use execution path to store workspace files")
     
     parserCmd.PersistentFlags().IntVar(&opts.Parser.NearTextSize, "neartext-size", 50, "Defines how much data should be captured before and after the matching text segment")
 

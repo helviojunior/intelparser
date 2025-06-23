@@ -14,7 +14,7 @@ type Options struct {
     Parser Parser
 
     // Force use current path as Temp Path
-    StoreTempAsWorkspace bool
+    StoreLocalWorkspace bool
 
     // Default DB as Control Only (ignore other tables)
     DefaultDBAsControlOnly bool
