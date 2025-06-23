@@ -136,6 +136,9 @@ var parserCmd = &cobra.Command{
                 return err
             }
             scanWriters = append(scanWriters, w)
+
+            // As we have another Writer, use the default database only to control database
+            globalDbWriter.ControlOnly = true
         }
 
         if len(scanWriters) == 0 {
