@@ -102,6 +102,11 @@ func (st *Status) Print() {
     if st.IsTerminal {
     	st.Spin = ascii.GetNextSpinner(st.Spin)
 
+        space := ""
+        if len(st.Spin) <= 4 {
+            space = strings.Repeat(" ", 4 - len(st.Spin))
+        }
+
     	fmt.Fprintf(os.Stderr, 
             "%s\n %s read: %d, failed: %d, ignored: %d               \n %s cred: %d, url: %d, email: %d\r\033[A\033[A", 
         	"                                                                        ",
@@ -109,7 +114,7 @@ func (st *Status) Print() {
             st.Parsed, 
             st.Error, 
             st.Skipped, 
-            strings.Repeat(" ", 4 - len(st.Spin)),
+            space,
             st.Credential, 
             st.Url, 
             st.Email)
