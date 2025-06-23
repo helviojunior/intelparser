@@ -284,12 +284,6 @@ func Unzip(src, dest string) error {
     return nil
 }
 
-func GetHash(data []byte) string {
-	h := sha1.New()
-	h.Write(data)
-	return hex.EncodeToString(h.Sum(nil))
-}
-
 func GetHashFromFile(file_path string) (string, error) {
 	f, err := os.Open(file_path)
 	if err != nil {

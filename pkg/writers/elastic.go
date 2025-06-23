@@ -167,7 +167,6 @@ func NewElasticWriter(uri string) (*ElasticWriter, error) {
                     "user_domain": {"type": "keyword"},
                     "username": {"type": "keyword"},
                     "password": {"type": "keyword"},
-                    "has_cpf": {"type": "keyword"},
                     "cpf": {"type": "keyword"},
                     "url": {"type": "keyword"},
                     "url_domain": {"type": "keyword"},
@@ -233,8 +232,6 @@ func NewElasticWriter(uri string) (*ElasticWriter, error) {
 	return wr, nil
 }
 
-
-
 // Write JSON lines to a file
 func (ew *ElasticWriter) Write(result *models.File) error {
 	var err error
@@ -252,7 +249,8 @@ func (ew *ElasticWriter) Write(result *models.File) error {
 		    return err
 		}
 
-		cid := tools.GetHash(b_data)
+		//cid := tools.GetHash(b_data)
+		cid := c.CalcHash(result.Fingerprint)
 		b_data, err = ew.MarshalAppend(b_data, map[string]interface{}{
 			"file_id": result.Fingerprint,
 			"bucket": result.Bucket,
@@ -294,7 +292,7 @@ func (ew *ElasticWriter) Write(result *models.File) error {
 		    return err
 		}
 
-		cid := tools.GetHash(b_data)
+		cid := u.CalcHash(result.Fingerprint)
 		b_data, err = ew.MarshalAppend(b_data, map[string]interface{}{
 			"file_id": result.Fingerprint,
 			"bucket": result.Bucket,
@@ -337,7 +335,7 @@ func (ew *ElasticWriter) Write(result *models.File) error {
 		    return err
 		}
 
-		cid := tools.GetHash(b_data)
+		cid := eml.CalcHash(result.Fingerprint)
 		b_data, err = ew.MarshalAppend(b_data, map[string]interface{}{
 			"file_id": result.Fingerprint,
 			"bucket": result.Bucket,

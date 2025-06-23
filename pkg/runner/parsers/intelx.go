@@ -85,30 +85,30 @@ func NewInteX(logger *slog.Logger, opts runner.Options) (*IntelxParser, error) {
 
 // witness does the work of probing a url.
 // This is where everything comes together as far as the runner is concerned.
-func (run *IntelxParser) ParseFile(thisRunner *runner.Runner, file_path string) (*models.File, error) {
-	logger := run.log.With("file_path", file_path)
+func (run *IntelxParser) ParseFile(thisRunner *runner.Runner, file runner.FileItem) (*models.File, error) {
+	logger := run.log.With("file_path", file.RealPath)
 	var err error
 
-	file_name_ext := filepath.Base(file_path)
+	file_name_ext := filepath.Base(file.RealPath)
 	var (
 		result = &models.File{
 			Provider: "IntelX",
-			FilePath: file_path,
+			FilePath: file.RealPath,
 			FileName: file_name_ext,
-			Name: file_path,
+			Name: file.VirtualPath,
 			Date: time.Now(),
 			IndexedAt: time.Now(),
 		}
 	)
 
 	if strings.ToLower(file_name_ext) == "info.csv" {
-		err = run.ParseInfo(file_path)
+		err = run.ParseInfo(file.RealPath)
 		return result, err
 	}
 
-	file_name := strings.TrimSuffix(file_name_ext, filepath.Ext(file_name_ext))
-	result.Fingerprint, _ = tools.GetHashFromFile(file_path)
-	result.MIMEType, _ = tools.GetMimeType(file_path)
+	file_name := strings.ToLower(strings.TrimSuffix(file_name_ext, filepath.Ext(file_name_ext)))
+	result.Fingerprint, _ = tools.GetHashFromFile(file.RealPath)
+	result.MIMEType, _ = tools.GetMimeType(file.RealPath)
 
 	if run.conn != nil {
 		response := run.conn.Raw("SELECT count(id) as count from files WHERE failed = 0 AND file_name = ? AND fingerprint = ?", file_name_ext, result.Fingerprint)
@@ -125,8 +125,12 @@ func (run *IntelxParser) ParseFile(thisRunner *runner.Runner, file_path string) 
 	idx := slices.IndexFunc(run.info, func(i InfoData) bool { return i.SystemID == file_name })
 	logger.Debug("Get info", "info_idx", idx)
 
-	if idx == 0 {
-		logger.Debug("File is not present at info.csv, ignoring...")
+	if idx == -1 {
+		if !tools.SliceHasStr([]string{".DS_Store"}, file_name_ext) {
+			logger.Warn("File is not present at info.csv, ignoring...")
+		}else{
+			logger.Debug("File is not present at info.csv, ignoring...")
+		}
 	    return nil, nil
 	}
 
@@ -134,7 +138,7 @@ func (run *IntelxParser) ParseFile(thisRunner *runner.Runner, file_path string) 
 		info := run.info[idx]
 		result.Name = info.Name
 		result.Date = info.Date
-		result.Bucket = info.Bucket
+		result.Bucket = "IntelX » " + info.Bucket
 		result.MediaType = info.Content
 		result.Size = info.Size
 		result.ProviderId = info.SystemID
@@ -154,6 +158,8 @@ func (run *IntelxParser) ParseFile(thisRunner *runner.Runner, file_path string) 
 		logger.Debug("saving file content")
 		result.Content, _ = tools.ReadTextFile(result.FilePath)
 	}
+
+	result.FilePath = file.VirtualPath
 
 	return result, nil
 }
@@ -266,7 +272,7 @@ func (run *IntelxParser) ParseInfo(file_path string) error {
                             Content:  	GetOrDefault(rec, Content, ""),
                             Type:  		GetOrDefault(rec, Type, ""),
                             Size:  		uint(s),
-                            SystemID:  	GetOrDefault(rec, SystemID, ""),
+                            SystemID:  	strings.ToLower(GetOrDefault(rec, SystemID, "")),
                         })
 		}
 	}

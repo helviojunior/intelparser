@@ -61,7 +61,7 @@ type Runner struct {
 	log *slog.Logger
 
 	// Files to scan.
-	Files chan string
+	Files chan FileItem
 
 	// in case we need to bail
 	ctx    context.Context
@@ -149,7 +149,7 @@ func NewRunner(logger *slog.Logger, parser ParserDriver, opts Options, writers [
 		Parser:     parser,
 		options:    opts,
 		writers:    writers,
-		Files:      make(chan string),
+		Files:      make(chan FileItem),
 		log:        logger,
 		ctx:        ctx,
 		cancel:     cancel,
@@ -210,8 +210,8 @@ func (run *Runner) AddSkipped() {
 	run.status.Parsed += 1
 }
 
-func (run *Runner) ParsePositionalFile(file_path string) error {
-	_, err := run.Parser.ParseFile(run, file_path)
+func (run *Runner) ParsePositionalFile(file FileItem) error {
+	_, err := run.Parser.ParseFile(run, file)
 	return err
 }
 
@@ -269,16 +269,19 @@ func (run *Runner) Run() Status {
 				select {
 				case <-run.ctx.Done():
 					return
-				case file_path, ok := <-run.Files:
+				case file_item, ok := <-run.Files:
 					if !ok || !run.status.Running {
 						return
 					}
-                    file_name := filepath.Base(file_path)
+                    file_name := filepath.Base(file_item.RealPath)
 					logger := run.log.With("file", file_name)
 					
                     logger.Debug("Indexing")
 
-					file, err := run.Parser.ParseFile(run, file_path)
+                    // Normalize to virtual path always use "/" as path separator
+                    file_item.VirtualPath = strings.Replace(file_item.VirtualPath, "\\", "/", -1)
+
+					file, err := run.Parser.ParseFile(run, file_item)
 					if err != nil {
 						file.Failed = true
 						file.FailedReason = err.Error()

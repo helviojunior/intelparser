@@ -3,8 +3,10 @@ package models
 import (
 	"time"
 	"encoding/json"
-	//"fmt"
+	"fmt"
 	"strings"
+	"crypto/sha1"
+    "encoding/hex"
 	
 )
 
@@ -74,7 +76,6 @@ type Credential struct {
 	Username    string      `json:"username"`
 	Password    string      `json:"password"`
 
-	HasCPF      bool        `json:"has_cpf"`
 	CPF         string      `json:"cpf"`
 
 	Url         string      `json:"url"`
@@ -195,8 +196,7 @@ func (cred Credential) MarshalJSON() ([]byte, error) {
 		UserDomain 	    	  string   	`json:"user_domain,omitempty"`
 		Username    		  string    `json:"username"`
 		Password	    	  string   	`json:"password"`
-		HasCPF      		  bool      `json:"has_cpf"`
-		CPF         		  string    `json:"cpf"`
+		CPF         		  string    `json:"cpf,omitempty"`
 		Url 		    	  string   	`json:"url,omitempty"`
 		UrlDomain			  string    `json:"url_domain,omitempty"`
 		Severity	    	  int   	`json:"severity"`
@@ -209,7 +209,6 @@ func (cred Credential) MarshalJSON() ([]byte, error) {
 		UserDomain			: strings.ToLower(cred.UserDomain),
 		Username 			: cred.Username,
 		Password 			: cred.Password,
-		HasCPF 				: cred.HasCPF,
 		CPF 				: cred.CPF,
 		Url 				: cred.Url,
 		UrlDomain			: strings.ToLower(cred.UrlDomain),
@@ -252,3 +251,41 @@ func (eml Email) MarshalJSON() ([]byte, error) {
 	})
 }
 
+
+func (cred Credential) CalcHash(additional_data string) string {
+	var hash string
+	_calcHash(&hash, additional_data, cred.Time, cred.Rule, cred.UserDomain, cred.Username, cred.Password, cred.Url)
+	return hash
+}
+
+func (u URL) CalcHash(additional_data string) string {
+	var hash string
+	_calcHash(&hash, additional_data, u.Time, u.Url)
+	return hash
+}
+
+func (eml Email) CalcHash(additional_data string) string {
+	var hash string
+	_calcHash(&hash, additional_data, eml.Time, eml.Email)
+	return hash
+}
+
+func _calcHash(outValue *string, keyvals ...interface{}) {
+
+	data := ""
+	for _, v := range keyvals {
+		if _, ok := v.(int); ok {
+            data += fmt.Sprintf("%d,", v)
+        }else if dt, ok := v.(time.Time); ok {
+            data += dt.Format(time.RFC3339)
+        }else{
+            data += fmt.Sprintf("%s,", v)
+        }
+	}
+
+	h := sha1.New()
+	h.Write([]byte(data))
+
+	*outValue = hex.EncodeToString(h.Sum(nil))
+
+}

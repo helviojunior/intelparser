@@ -23,7 +23,7 @@ import (
     "github.com/spf13/cobra"
 )
 
-func AddZipFile(temp_folder string, file_path string) error {
+func AddZipFile(temp_folder string, file_path string, virtual_path string) error {
     var mime string
     var dst string
     var err error
@@ -51,11 +51,11 @@ func AddZipFile(temp_folder string, file_path string) error {
         return err
     }
 
-    return AddFolder(temp_folder, dst, file_path);
+    return AddFolder(temp_folder, dst, file_path, filepath.Join(virtual_path, file_name));
 
 }
 
-func AddFolder(temp_folder string, folder_path string, zip_source string) error {
+func AddFolder(temp_folder string, folder_path string, zip_source string, virtual_path string) error {
     //scanRunner.Files <- intelxCmdOptions.Path
 
     entries, err := os.ReadDir(folder_path)
@@ -76,13 +76,19 @@ func AddFolder(temp_folder string, folder_path string, zip_source string) error 
         log.Info("Parsing ZIP file", "file", file_name)
     }
 
-    if err := scanRunner.ParsePositionalFile(info); err != nil {
+    if err := scanRunner.ParsePositionalFile(runner.FileItem{
+        RealPath: info,
+        VirtualPath: filepath.Join(virtual_path, "Info.csv"),
+    }); err != nil {
         return err
     }
 
     for _, e := range entries {
         if e.Name() != "Info.csv" && e.Name() != "info.sqlite3" {
-            scanRunner.Files <- filepath.Join(folder_path, e.Name())
+            scanRunner.Files <- runner.FileItem{
+                RealPath: filepath.Join(folder_path, e.Name()),
+                VirtualPath: filepath.Join(virtual_path, e.Name()),
+            }
         }
     }
 
@@ -160,7 +166,7 @@ Parse IntelX downloaded files (ZIP or folder).
 
             if ft == "file" {
                 //File
-                if err = AddZipFile(tempFolder, intelxCmdOptions.Path); err != nil {
+                if err = AddZipFile(tempFolder, intelxCmdOptions.Path, ""); err != nil {
                     log.Error("error parsing ZIP file", "err", err)
                 }
 
@@ -170,7 +176,7 @@ Parse IntelX downloaded files (ZIP or folder).
                 info := filepath.Join(intelxCmdOptions.Path, "Info.csv")
                 if tools.FileExists(info) {
                     
-                    if err = AddFolder(tempFolder, intelxCmdOptions.Path, ""); err != nil {
+                    if err = AddFolder(tempFolder, intelxCmdOptions.Path, "", ""); err != nil {
                         log.Error("error", "err", err)
                     }
 
@@ -178,7 +184,7 @@ Parse IntelX downloaded files (ZIP or folder).
 
                     entries, err := os.ReadDir(intelxCmdOptions.Path)
                     if err != nil {
-                        log.Error("Rrror listting directory files", "err", err)
+                        log.Error("Error listting directory files", "err", err)
                         os.Exit(2)
                     }
 
@@ -199,7 +205,7 @@ Parse IntelX downloaded files (ZIP or folder).
                             os.Exit(2)
                         }
 
-                        err = AddZipFile(tempFolder, filepath.Join(intelxCmdOptions.Path, e.Name()))
+                        err = AddZipFile(tempFolder, filepath.Join(intelxCmdOptions.Path, e.Name()), "")
                         if err != nil {
                             log.Debug("Error checking ZIP file", "file", e.Name(), "err", err)
                         }

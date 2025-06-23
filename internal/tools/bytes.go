@@ -8,6 +8,9 @@ import (
     "strconv"
     "strings"
     "unicode"
+    "crypto/sha1"
+    "encoding/hex"
+    "time"
 )
 
 // IEC Sizes.
@@ -151,4 +154,31 @@ func ParseBytes(s string) (uint64, error) {
     }
 
     return 0, fmt.Errorf("unhandled size name: %v", extra)
+}
+
+
+func GetHash(data []byte) string {
+    h := sha1.New()
+    h.Write(data)
+    return hex.EncodeToString(h.Sum(nil))
+}
+
+func GetHashFromValues(values ...interface{}) string {
+
+    data := ""
+    for _, v := range values {
+        if _, ok := v.(int); ok {
+            data += fmt.Sprintf("%d,", v)
+        }else if dt, ok := v.(time.Time); ok {
+            data += dt.Format(time.RFC3339)
+        }else{
+            data += fmt.Sprintf("%s,", v)
+        }
+    }
+
+    h := sha1.New()
+    h.Write([]byte(data))
+
+    return hex.EncodeToString(h.Sum(nil))
+
 }

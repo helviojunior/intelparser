@@ -94,14 +94,11 @@ func Leak3() *Rule {
                 Url         : u1,
             }
 
-            hasCpf := false
             cpf := ""
             if ok, c := tools.ExtractCPF(u2); ok {
-                hasCpf = true
                 cpf = c
             }
             if ok, c := tools.ExtractCPF(p1); ok {
-                hasCpf = true
                 cpf = c
             }
 
@@ -114,7 +111,6 @@ func Leak3() *Rule {
                 Url         : u1,
                 Severity    : 100,
                 Entropy     : finding.Entropy,
-                HasCPF      : hasCpf,
                 CPF         : cpf,
             }
             return true, nil
