@@ -125,6 +125,25 @@ func SafeFileName(s string) string {
 	return builder.String()
 }
 
+// SafeFileName takes a string and returns a string safe to use as
+// a file name.
+func SafeFileNameWithRnd(s string) string {
+	var builder strings.Builder
+	randBytes := make([]byte, 6)
+    rand.Read(randBytes)
+
+	for _, r := range s {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) || r == '.' {
+			builder.WriteRune(r)
+		} else {
+			builder.WriteRune('-')
+		}
+	}
+
+	return builder.String() + "_" + hex.EncodeToString(randBytes)
+}
+
+
 func TempFileName(base_path, prefix, suffix string) string {
     randBytes := make([]byte, 16)
     rand.Read(randBytes)

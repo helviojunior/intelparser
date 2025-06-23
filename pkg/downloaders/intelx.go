@@ -337,7 +337,7 @@ func (dwn *IntelXDownloader) DownloadResult(api *ixapi.IntelligenceXAPI, searchI
         return err
     }
 
-	fileName := filepath.Join(tmpDwn, tools.SafeFileName(searchID.String()) + ".zip")
+	fileName := filepath.Join(tmpDwn, tools.SafeFileNameWithRnd(searchID.String()) + ".zip")
 
 	err = api.DownloadZip(dwn.ctx, searchID, Limit, fileName)
 	if err != nil {
@@ -375,18 +375,20 @@ func (dwn *IntelXDownloader) DownloadResult(api *ixapi.IntelligenceXAPI, searchI
     }
 
     for _, e := range entries {
-        if e.Name() != "Info.csv" {
-        	logger.Debug("Checking", "file", e.Name())
-        	dstFileName := filepath.Join(dwn.tempFolder, e.Name())
+    	logger.Debug("Checking", "file", e.Name())
+        dstFileName := filepath.Join(dwn.tempFolder, e.Name())
 
+        if e.Name() != "Info.csv" {
         	id := strings.Replace(e.Name(), filepath.Ext(e.Name()), "", 1)
         	dwn.conn.Raw("UPDATE intex_result_item SET filename = ?, downloaded = 1 WHERE system_id = ?", e.Name(), id)
-
-		    if err = os.Rename(filepath.Join(dst, e.Name()), dstFileName); err != nil {
-		        return err
-		    }
-		    dwn.status.Downloaded++
+        	dwn.status.Downloaded++
+        }else{
+        	dstFileName = filepath.Join(dwn.tempFolder, "info_orig_" + tools.SafeFileNameWithRnd(searchID.String()) + ".csv")
         }
+
+	    if err = os.Rename(filepath.Join(dst, e.Name()), dstFileName); err != nil {
+	        return err
+	    }
     }
 
     tools.RemoveFolder(dst)
