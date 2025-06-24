@@ -62,6 +62,8 @@ type Parser struct {
     Threads int
     //Size of near text data
     NearTextSize int
+
+    StoreNearText bool
 }
 
 // NewDefaultOptions returns Options with some default values
@@ -71,6 +73,7 @@ func NewDefaultOptions() *Options {
             Path:             "invalid",
             Threads:          6,
             NearTextSize:     50,
+            StoreNearText:    false,
         },
         Logging: Logging{
             Debug:         true,

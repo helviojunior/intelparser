@@ -163,6 +163,7 @@ func init() {
     parserCmd.PersistentFlags().BoolVar(&opts.StoreLocalWorkspace, "local-workspace", false, "Use execution path to store workspace files")
     
     parserCmd.PersistentFlags().IntVar(&opts.Parser.NearTextSize, "neartext-size", 50, "Defines how much data should be captured before and after the matching text segment")
+    parserCmd.PersistentFlags().BoolVar(&opts.Parser.StoreNearText, "store-neartext", false, "Stores text near rule matches for context. (warning: may drastically increase storage usage!)")
 
     parserCmd.PersistentFlags().BoolVar(&opts.Writer.Db, "write-db", false, "Write results to a SQLite database")
     parserCmd.PersistentFlags().StringVar(&opts.Writer.DbURI, "write-db-uri", "sqlite:///intelparser.sqlite3", "The database URI to use. Supports SQLite, Postgres, and MySQL (e.g., postgres://user:pass@host:port/db)")
@@ -173,7 +174,6 @@ func init() {
     parserCmd.PersistentFlags().StringVar(&opts.Writer.JsonlFile, "write-jsonl-file", "intelparser.jsonl", "The file to write JSON lines to")
     parserCmd.PersistentFlags().BoolVar(&opts.Writer.Stdout, "write-stdout", false, "Write successful results to stdout (usefull in a shell pipeline)")
     parserCmd.PersistentFlags().BoolVar(&opts.Writer.None, "write-none", false, "Use an empty writer to silence warnings")
-
     parserCmd.PersistentFlags().BoolVar(&opts.Writer.ELastic, "write-elastic", false, "Write results to a SQLite database")
     parserCmd.PersistentFlags().StringVar(&opts.Writer.ELasticURI, "write-elasticsearch-uri", "http://localhost:9200/intelparser", "The elastic search URI to use. (e.g., http://user:pass@host:9200/index)")
 

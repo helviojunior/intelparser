@@ -865,21 +865,25 @@ func (run *Runner) detectRule(fragment Fragment, currentRaw string, r *rules.Rul
             continue
         }
 
-        //If all is OK, get near text
 
-        nearIndexStart := loc.startLineIndex - run.options.Parser.NearTextSize
-        if nearIndexStart < 0 {
-            nearIndexStart = 0
-        }
-        nearIndexEnd := loc.endLineIndex + run.options.Parser.NearTextSize
-        if nearIndexEnd <= nearIndexStart {
-            nearIndexEnd += nearIndexStart + 1
-        }
-        if nearIndexEnd > len(fragment.Raw) {
-            nearIndexEnd = len(fragment.Raw)
-        }
+        nearText := ""
+        if run.options.Parser.StoreNearText {
 
-        nearText := fragment.Raw[nearIndexStart:nearIndexEnd]
+            //If all is OK, get near text
+            nearIndexStart := loc.startLineIndex - run.options.Parser.NearTextSize
+            if nearIndexStart < 0 {
+                nearIndexStart = 0
+            }
+            nearIndexEnd := loc.endLineIndex + run.options.Parser.NearTextSize
+            if nearIndexEnd <= nearIndexStart {
+                nearIndexEnd += nearIndexStart + 1
+            }
+            if nearIndexEnd > len(fragment.Raw) {
+                nearIndexEnd = len(fragment.Raw)
+            }
+            
+            nearText = fragment.Raw[nearIndexStart:nearIndexEnd]
+        }
 
         if finding.Credential.Username != "" {
             finding.Credential.NearText = nearText
