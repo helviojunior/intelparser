@@ -16,6 +16,8 @@ import (
 	"reflect"
 	"strconv"
 
+	"bufio"
+
 	"github.com/gofrs/uuid"
 
     tty "golang.org/x/term"
@@ -26,7 +28,7 @@ import (
     "github.com/helviojunior/intelparser/pkg/ixapi"
     "github.com/helviojunior/intelparser/pkg/log"
     "gorm.io/gorm"
-	"gorm.io/gorm/clause"
+	//"gorm.io/gorm/clause"
 )
 
 const textSupportedSelectors = "Selector types supported:\n  * Email address\n  * Domain, including wildcards like *.example.com\n  * URL\n  * IPv4 and IPv6\n  * CIDRv4 and CIDRv6\n  * Phone Number\n  * Bitcoin address\n  * MAC address\n  * IPFS Hash\n  * UUID\n  * Simhash\n  * Credit card number\n  * IBAN\n"
@@ -374,6 +376,11 @@ func (dwn *IntelXDownloader) DownloadResult(api *ixapi.IntelligenceXAPI, searchI
         return err
     }
 
+    info := filepath.Join(dwn.tempFolder, "Info.csv")
+    if tools.FileExists(info) {
+        dwn.ParseInfo(info)
+    }
+
     for _, e := range entries {
     	logger.Debug("Checking", "file", e.Name())
         dstFileName := filepath.Join(dwn.tempFolder, e.Name())
@@ -394,6 +401,101 @@ func (dwn *IntelXDownloader) DownloadResult(api *ixapi.IntelligenceXAPI, searchI
     tools.RemoveFolder(dst)
 
 	return nil
+}
+
+func (dwn *IntelXDownloader) ParseInfo(file_path string) error {
+	f, err := os.Open(file_path)
+    if err != nil {
+        return err
+    }
+    defer f.Close()
+
+    br := bufio.NewReader(f)
+    r, _, err := br.ReadRune()
+    if err != nil {
+        return err
+    }
+    if r != '\uFEFF' {
+        br.UnreadRune() // Not a BOM -- put the rune back
+    }
+
+    csvReader := csv.NewReader(br)
+    records, err := csvReader.ReadAll()
+    if err != nil {
+        return err
+    }
+
+    Name := -1
+	Date := -1
+	Bucket := -1
+	Media := -1
+	Content := -1
+	Type := -1
+	Size := -1
+	SystemID := -1
+
+	for idx, c := range records[0] {
+		switch strings.ToLower(c) {
+		    case "name":
+		        Name = idx
+		    case "date":
+		        Date = idx
+		    case "bucket":
+		        Bucket = idx
+		    case "media":
+		        Media = idx
+		    case "content":
+		        Content = idx
+		    case "type":
+		        Type = idx
+		    case "size":
+		        Size = idx
+		    case "system id":
+		        SystemID = idx
+		    
+	    }
+	}
+
+	for idx, rec := range records {
+		if idx > 0 {
+			s, err := strconv.Atoi(rec[Size])
+			if err != nil {
+				s = 0
+			}
+
+			dt, err := time.Parse("2006-01-02 15:04:05", GetOrDefault(rec, Date, ""))
+			if err != nil {
+				dt, err = time.Parse(time.RFC3339, GetOrDefault(rec, Date, ""))
+				if err != nil {
+					dt = time.Now()
+				}
+			}
+
+			res := &ixapi.SearchResult{
+                            MediaH:  	GetOrDefault(rec, Media, ""),
+                            TypeH: 		GetOrDefault(rec, Type, ""),
+                            BucketH:    GetOrDefault(rec, Bucket, ""),
+                        }
+
+            res.SystemID = strings.ToLower(GetOrDefault(rec, SystemID, ""))
+            res.Name = GetOrDefault(rec, Name, "")
+            res.Bucket = GetOrDefault(rec, Bucket, "")
+            res.MediaH = GetOrDefault(rec, Content, "")
+            res.Size = int64(s)
+            res.Date = dt
+            dwn.WriteDb(res, false)
+		}
+	}
+
+    return nil
+}
+
+func GetOrDefault(data []string, index int, def string) string {
+	if index == -1 {
+		return def
+	}
+
+	return strings.Trim(string(data[index]), " \r\n\t")
 }
 
 func (dwn *IntelXDownloader) SearchNext() (int, error) {
@@ -483,7 +585,7 @@ func (dwn *IntelXDownloader) SearchNext() (int, error) {
 						
 						logger.Debug("Reg", "did", record.SystemID)
 
-						i, _ := dwn.WriteDb(&record)
+						i, _ := dwn.WriteDb(&record, true)
 
 						if i {
 							inserted++
@@ -542,7 +644,7 @@ func (dwn *IntelXDownloader) SearchNext() (int, error) {
 }
 
 // Write results to the database
-func (dwn *IntelXDownloader) WriteDb(result *ixapi.SearchResult) (bool, error) {
+func (dwn *IntelXDownloader) WriteDb(result *ixapi.SearchResult, update bool) (bool, error) {
 	dwn.mutex.Lock()
 	defer dwn.mutex.Unlock()
 
@@ -556,9 +658,15 @@ func (dwn *IntelXDownloader) WriteDb(result *ixapi.SearchResult) (bool, error) {
         _ = response.Row().Scan(&cnt)
     }
 
+    if !update && cnt > 0 {
+    	return cnt == 0, nil
+    }
+
+    /*
 	if _, ok := dwn.conn.Statement.Clauses["ON CONFLICT"]; !ok {
 		dwn.conn = dwn.conn.Clauses(clause.OnConflict{UpdateAll: true})
-	}
+	}*/
+
 	return cnt == 0, dwn.conn.CreateInBatches(result, 50).Error
 }
 

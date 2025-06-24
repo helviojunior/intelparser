@@ -15,6 +15,9 @@ import (
     "time"
     "path/filepath"
     "github.com/gofrs/uuid"
+
+    "gorm.io/gorm"
+    "gorm.io/gorm/clause"
 )
 
 // IntelligentSearchRequest is the information from the human for the search.
@@ -61,11 +64,13 @@ func (Relationship) TableName() string {
     return "intex_relationship"
 }
 
+
+
 // Item represents any items meta-data. It origins from Indexed and is sent as search results.
 // All fields except the identifier are optional and may be zero. It is perfectly valid that a service only knows partial information (like a name or storage id) of a given item.
 type Item struct {
     ID          uint      `json:"id" gorm:"primarykey"`
-    SystemID    string    `json:"systemid";gorm:"unique;not null";gorm:"index:idx_system_id`    // System identifier uniquely identifying the item
+    SystemID    string    `gorm:"column:system_id;index:,unique;" json:"systemid"`    // System identifier uniquely identifying the item
     StorageID   string    `json:"storageid"`   // Storage identifier, empty if not stored/available, otherwise a 64-byte blake2b hash hex-encoded
     InStore     bool      `json:"instore"`     // Whether the data of the item is in store and the storage id is valid. Also used to indicate update when false but storage id is set.
     Size        int64     `json:"size"`        // Size in bytes of the item data
@@ -88,6 +93,15 @@ type Item struct {
 
     // Relations lists all related items.
     Relations []Relationship `json:"relations"`
+}
+
+func (item *Item) BeforeCreate(tx *gorm.DB) (err error) {
+    tx.Statement.AddClause(clause.OnConflict{
+        //Columns:   cols,
+        Columns:   []clause.Column{{Name: "system_id"}},
+        UpdateAll: true,
+    })
+    return nil
 }
 
 func (Item) TableName() string {

@@ -71,6 +71,7 @@ func NewInteX(logger *slog.Logger, opts runner.Options) (*IntelxParser, error) {
 	var err error
 	conn, err = database.Connection(opts.Writer.GlobalDbURI, true, false)
 	if err != nil {
+		logger.Debug("Error connecting to the database", "conn", opts.Writer.GlobalDbURI, "err", err)
 		conn = nil
 	}
 

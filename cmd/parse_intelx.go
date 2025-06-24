@@ -45,6 +45,7 @@ func AddZipFile(temp_folder string, file_path string, virtual_path string) error
         logger.Debug("Error creating temp folder to extract zip file", "err", err)
         return err
     }
+    defer tools.RemoveFolder(dst)
 
     if err = tools.Unzip(file_path, dst); err != nil {
         logger.Debug("Error extracting zip file", "temp_folder", dst, "err", err)
@@ -52,7 +53,6 @@ func AddZipFile(temp_folder string, file_path string, virtual_path string) error
     }
 
     return AddFolder(temp_folder, dst, file_path, filepath.Join(virtual_path, file_name));
-
 }
 
 func AddFolder(temp_folder string, folder_path string, zip_source string, virtual_path string) error {
@@ -92,6 +92,7 @@ func AddFolder(temp_folder string, folder_path string, zip_source string, virtua
         }
     }
 
+    time.Sleep(time.Duration(time.Second * 10))
     return nil
 }
 

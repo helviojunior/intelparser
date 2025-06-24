@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+	"runtime"
 
 	"github.com/glebarez/sqlite"
 	"github.com/helviojunior/intelparser/pkg/models"
@@ -36,6 +37,9 @@ func Connection(uri string, shouldExist, debug bool) (*gorm.DB, error) {
 	switch db.Scheme {
 	case "sqlite":
 		if shouldExist {
+			if runtime.GOOS == "windows" && db.Path[0:1] == "/" {
+				db.Path = db.Path[1:]
+			}
 			dbpath := filepath.Join(db.Host, db.Path)
 			dbpath = filepath.Clean(dbpath)
 

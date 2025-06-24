@@ -55,6 +55,7 @@ var UrlDomainStopWords = []string{
 }
 
 var DefaultStopWords = []string{
+	"null",
 	"000000",
 	"aaaaaa",
 	"about",
