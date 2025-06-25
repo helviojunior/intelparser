@@ -14,6 +14,8 @@ import (
 	"crypto/tls"
 	//"reflect"
 	//"io"
+	"os"
+    "strconv"
 
 	"github.com/helviojunior/intelparser/internal/tools"
 	"github.com/helviojunior/intelparser/pkg/models"
@@ -121,6 +123,24 @@ func NewElasticWriter(uri string) (*ElasticWriter, error) {
 	wr.Client, err = elk.NewClient(conf)
 	if err != nil {
 	    return nil, err
+	}
+
+	if v1, ok := os.LookupEnv("ELK_BULK_SIZE"); ok {
+		if i1, err := strconv.ParseInt(v1, 10, 32); err == nil {
+			if i1 > 10 {
+				logger.Infof("Setting maximum ELK bulk count as %d using env.ELK_BULK_SIZE", i1)
+				elkBulkCount = int(i1)
+			}  
+		}
+	}
+
+	if v1, ok := os.LookupEnv("ELK_BULK_BYTES"); ok {
+		if i1, err := strconv.ParseInt(v1, 10, 32); err == nil {
+			if i1 > 4094 {
+				logger.Infof("Setting maximum ELK bulk size as %s using env.ELK_BULK_BYTES", tools.Bytes(uint64(i1)))
+				elkBulkMaxSize = int(i1)
+			}  
+		}
 	}
 
 	//File Index
