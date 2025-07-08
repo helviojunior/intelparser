@@ -20,6 +20,8 @@ type Options struct {
     DefaultDBAsControlOnly bool
 
     DateFilter *time.Time
+
+    IndexedDateFilter *time.Time
 }
 
 // Logging is log related options

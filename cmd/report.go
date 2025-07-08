@@ -30,6 +30,7 @@ type ConvStatus struct {
 }
 
 var dateFilter = ""
+var indexedDateFilter = ""
 var rptFilter = ""
 var filterList = []string{}
 var reportCmd = &cobra.Command{
@@ -72,6 +73,18 @@ Work with intelparser reports.
             log.Warn("Date filter (start-date): " + opts.DateFilter.Format("2006-01-02"))
         }
 
+        if indexedDateFilter != "" {
+            t, err := time.Parse("2006-01-02", indexedDateFilter)
+            if err != nil {
+                return err
+            }
+            opts.IndexedDateFilter = &t
+        }
+
+        if opts.IndexedDateFilter != nil {
+            log.Warn("Indexed files date filter (start-date): " + opts.IndexedDateFilter.Format("2006-01-02"))
+        }
+
         if len(filterList) > 0 {
             log.Warn("Filter list: " + strings.Join(filterList, ", "))
         }
@@ -85,6 +98,7 @@ func init() {
 
     reportCmd.PersistentFlags().StringVar(&rptFilter, "filter", "", "Comma-separated terms to filter results")
     reportCmd.PersistentFlags().StringVar(&dateFilter, "date-from", "", "Minimum date to convert. (Format: yyyy-mm-dd)")
+    reportCmd.PersistentFlags().StringVar(&indexedDateFilter, "indexed-date-from", "", "Minimum date to convert. (Format: yyyy-mm-dd)")
 }
 
 func (st *ConvStatus) Print() { 
@@ -187,7 +201,12 @@ func convertFromDbTo(from string, writer writers.Writer, status *ConvStatus) err
     //    return err
     //}
 
-    rows, err := conn.Model(&models.File{}).Rows()
+    sql_files := "id >= 0 "
+    if opts.IndexedDateFilter != nil {
+        sql_files += " AND [indexed_at] >= '" + opts.IndexedDateFilter.Format("2006-01-02") + "' "
+    }
+
+    rows, err := conn.Model(&models.File{}).Where(sql_files).Rows()
     defer rows.Close()
     if err != nil {
         return err
