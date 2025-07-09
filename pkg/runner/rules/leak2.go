@@ -33,18 +33,20 @@ func Leak2() *Rule {
             for _, p := range strings.Split(finding.Match, "\n") {
 
                 s1 := strings.SplitN(p, ":", 2)
-                k := strings.ToLower(strings.Trim(s1[0], " \r\n\t"))
-                v := strings.Trim(s1[1], " \r\n\t")
+                if len(s1) >= 2 {
+                    k := strings.ToLower(strings.Trim(s1[0], " \r\n\t"))
+                    v := strings.Trim(s1[1], " \r\n\t")
 
-                switch k {
-                case "url", "host":
-                u1 = v
+                    switch k {
+                    case "url", "host":
+                    u1 = v
 
-                case "user", "username", "login", "email":
-                u2 = v
+                    case "user", "username", "login", "email":
+                    u2 = v
 
-                case "pass", "password", "token", "secret", "senha", "pwd":
-                p1 = v
+                    case "pass", "password", "token", "secret", "senha", "pwd":
+                    p1 = v
+                    }
                 }
             }
 
