@@ -29,7 +29,8 @@ get-version:
 			echo "Using cached release tag from .version" ; \
 		else \
 			echo "Fetching latest release tag from GitHub..." ; \
-			curl -s https://api.github.com/repos/helviojunior/intelparser/releases/latest \
+			NAME=`echo ${PACKAGENAME} | sed 's/github.com//g'` ; \
+			curl -s https://api.github.com/repos$${NAME}/releases/latest \
 				| grep '"tag_name":' | head -n 1 | grep -oE 'v[0-9\.]+' > ${TARGET}/.version ; \
 			echo "Saved release tag to .version" ; \
 		fi ; \
