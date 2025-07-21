@@ -5,6 +5,10 @@
 *.dylib
 *.sqlite3
 *.jsonl
+*.version
+*.verstr
+*.ldflags
+
 intelparser
 # dep vendor/
 vendor/
