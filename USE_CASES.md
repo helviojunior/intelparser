@@ -102,6 +102,8 @@ WARN Execution statistics
 
 To this example I used only one term to filter the data `sec4us`
 
+> Note: You can use environment variables `INTELPARSER_OUTPUT_USERNAME` and `INTELPARSER_OUTPUT_PASSWORD` to set elasticsearch credentials.
+
 ```
 $ intelparser report elastic --elasticsearch-uri "http://10.10.10.10:9200/sec4us" --filter sec4us
 

@@ -77,6 +77,8 @@ INFO Convertion status
      -> E-mails..........: 0
 ```
 
+> Note: You can use environment variables `INTELPARSER_OUTPUT_USERNAME` and `INTELPARSER_OUTPUT_PASSWORD` to set elasticsearch credentials.
+
 
 ## Help
 
