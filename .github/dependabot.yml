@@ -1,0 +1,40 @@
+# Dependabot configuration for IntelParser
+version: 2
+updates:
+  # Update Go modules
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps(go):"
+      include: "scope"
+    reviewers:
+      - "helviojunior"
+    assignees:
+      - "helviojunior"
+    labels:
+      - "dependencies"
+      - "go"
+    
+  # Update GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "ci:"
+      include: "scope"
+    reviewers:
+      - "helviojunior"
+    assignees:
+      - "helviojunior"
+    labels:
+      - "dependencies"
+      - "github-actions"
