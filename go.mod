@@ -7,7 +7,7 @@ require (
 	github.com/charmbracelet/glamour v0.8.0
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/charmbracelet/log v0.4.2
-	github.com/elastic/go-elasticsearch/v8 v8.17.0
+	github.com/elastic/go-elasticsearch/v8 v8.19.0
 	github.com/glebarez/sqlite v1.11.0
 	github.com/go-dedup/simhash v0.0.0-20170904020510-9ecaca7b509c
 	github.com/gofrs/uuid v4.4.0+incompatible
