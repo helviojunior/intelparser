@@ -19,9 +19,9 @@ require (
 	golang.org/x/exp v0.0.0-20241215155358-4a5509556b9e
 	golang.org/x/sys v0.30.0
 	golang.org/x/term v0.27.0
-	gorm.io/driver/mysql v1.5.7
+	gorm.io/driver/mysql v1.6.0
 	gorm.io/driver/postgres v1.5.11
-	gorm.io/gorm v1.25.12
+	gorm.io/gorm v1.30.0
 )
 
 require (
