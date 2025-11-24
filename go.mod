@@ -12,7 +12,7 @@ require (
 	github.com/go-dedup/simhash v0.0.0-20170904020510-9ecaca7b509c
 	github.com/gofrs/uuid v4.4.0+incompatible
 	github.com/h2non/filetype v1.1.3
-	github.com/helviojunior/gopathresolver v0.1.0
+	github.com/helviojunior/gopathresolver v0.1.6
 	github.com/muesli/termenv v0.16.0
 	github.com/prometheus/procfs v0.19.1
 	github.com/spf13/cobra v1.10.1
