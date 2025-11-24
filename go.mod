@@ -18,7 +18,7 @@ require (
 	github.com/spf13/cobra v1.10.1
 	golang.org/x/exp v0.0.0-20241215155358-4a5509556b9e
 	golang.org/x/sys v0.37.0
-	golang.org/x/term v0.31.0
+	golang.org/x/term v0.36.0
 	gorm.io/driver/mysql v1.6.0
 	gorm.io/driver/postgres v1.6.0
 	gorm.io/gorm v1.31.0
