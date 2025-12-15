@@ -15,7 +15,7 @@ require (
 	github.com/helviojunior/gopathresolver v0.1.6
 	github.com/muesli/termenv v0.16.0
 	github.com/prometheus/procfs v0.19.2
-	github.com/spf13/cobra v1.10.1
+	github.com/spf13/cobra v1.10.2
 	golang.org/x/exp v0.0.0-20241215155358-4a5509556b9e
 	golang.org/x/sys v0.37.0
 	golang.org/x/term v0.36.0
