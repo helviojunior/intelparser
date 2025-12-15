@@ -85,7 +85,7 @@ jobs:
           env GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -o ./build/${{ steps.vars.outputs.FILENAME }} .
 
       - name: Upload Go build results
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: ${{ steps.vars.outputs.FILENAME }}
           path: ./build/${{ steps.vars.outputs.FILENAME }}
