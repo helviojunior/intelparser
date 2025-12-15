@@ -128,11 +128,11 @@ func (run *IntelxParser) ParseFile(thisRunner *runner.Runner, file runner.FileIt
 
 	if idx == -1 {
 		if !tools.SliceHasStr([]string{".DS_Store"}, file_name_ext) {
-			logger.Warn("File is not present at info.csv, ignoring...")
+			logger.Warn("File is not present at info.csv")
 		}else{
-			logger.Debug("File is not present at info.csv, ignoring...")
+			logger.Debug("File is not present at info.csv")
 		}
-	    return nil, nil
+	    //return nil, nil
 	}
 
 	if idx >= 0 {
@@ -143,8 +143,14 @@ func (run *IntelxParser) ParseFile(thisRunner *runner.Runner, file runner.FileIt
 		result.MediaType = info.Content
 		result.Size = info.Size
 		result.ProviderId = info.SystemID
-		result.Date = info.Date
 		logger.Debug("Get info", "info_data", info)
+	}else{
+		result.Name = file_name
+		result.Date = time.Now()
+		result.Bucket = "IntelX » Unknown"
+		result.MediaType = ""
+		result.Size = 0
+		result.ProviderId = file_name
 	}
 
 	logger = run.log.With("file", file_name_ext)
