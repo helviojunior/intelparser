@@ -1,6 +1,6 @@
 module github.com/helviojunior/intelparser
 
-go 1.24.0
+go 1.25.0
 
 require (
 	github.com/BobuSumisu/aho-corasick v1.0.3
@@ -14,7 +14,7 @@ require (
 	github.com/h2non/filetype v1.1.3
 	github.com/helviojunior/gopathresolver v0.1.6
 	github.com/muesli/termenv v0.16.0
-	github.com/prometheus/procfs v0.19.2
+	github.com/prometheus/procfs v0.20.1
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/exp v0.0.0-20241215155358-4a5509556b9e
 	golang.org/x/sys v0.41.0
@@ -70,7 +70,7 @@ require (
 	go.opentelemetry.io/otel/trace v1.28.0 // indirect
 	golang.org/x/crypto v0.31.0 // indirect
 	golang.org/x/net v0.33.0 // indirect
-	golang.org/x/sync v0.17.0 // indirect
+	golang.org/x/sync v0.19.0 // indirect
 	golang.org/x/text v0.24.0 // indirect
 	modernc.org/libc v1.61.4 // indirect
 	modernc.org/mathutil v1.6.0 // indirect
