@@ -47,6 +47,10 @@ func (dw *DbWriter) Write(result *models.File) error {
 		return nil
 	}
 
+	// Sanitize all string fields to remove null bytes and invalid UTF-8 sequences
+	// that would cause PostgreSQL encoding errors (SQLSTATE 22021)
+	result.Sanitize()
+
 	dw.mutex.Lock()
 	defer dw.mutex.Unlock()
 

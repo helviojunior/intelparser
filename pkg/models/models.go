@@ -7,7 +7,8 @@ import (
 	"strings"
 	"crypto/sha1"
     "encoding/hex"
-	
+
+	"github.com/helviojunior/intelparser/internal/tools"
 )
 
 //Name,Date,Bucket,Media,Content Type,Size,System ID
@@ -288,4 +289,55 @@ func _calcHash(outValue *string, keyvals ...interface{}) {
 
 	*outValue = hex.EncodeToString(h.Sum(nil))
 
+}
+
+// Sanitize removes null bytes and invalid UTF-8 sequences from all string fields
+func (file *File) Sanitize() {
+	file.Provider = tools.SanitizeUTF8(file.Provider)
+	file.FilePath = tools.SanitizeUTF8(file.FilePath)
+	file.FileName = tools.SanitizeUTF8(file.FileName)
+	file.Name = tools.SanitizeUTF8(file.Name)
+	file.Bucket = tools.SanitizeUTF8(file.Bucket)
+	file.MediaType = tools.SanitizeUTF8(file.MediaType)
+	file.ProviderId = tools.SanitizeUTF8(file.ProviderId)
+	file.MIMEType = tools.SanitizeUTF8(file.MIMEType)
+	file.Fingerprint = tools.SanitizeUTF8(file.Fingerprint)
+	file.Content = tools.SanitizeUTF8(file.Content)
+	file.FailedReason = tools.SanitizeUTF8(file.FailedReason)
+
+	for i := range file.Credentials {
+		file.Credentials[i].Sanitize()
+	}
+	for i := range file.Emails {
+		file.Emails[i].Sanitize()
+	}
+	for i := range file.URLs {
+		file.URLs[i].Sanitize()
+	}
+}
+
+// Sanitize removes null bytes and invalid UTF-8 sequences from all string fields
+func (cred *Credential) Sanitize() {
+	cred.Rule = tools.SanitizeUTF8(cred.Rule)
+	cred.UserDomain = tools.SanitizeUTF8(cred.UserDomain)
+	cred.Username = tools.SanitizeUTF8(cred.Username)
+	cred.Password = tools.SanitizeUTF8(cred.Password)
+	cred.CPF = tools.SanitizeUTF8(cred.CPF)
+	cred.Url = tools.SanitizeUTF8(cred.Url)
+	cred.UrlDomain = tools.SanitizeUTF8(cred.UrlDomain)
+	cred.NearText = tools.SanitizeUTF8(cred.NearText)
+}
+
+// Sanitize removes null bytes and invalid UTF-8 sequences from all string fields
+func (eml *Email) Sanitize() {
+	eml.Domain = tools.SanitizeUTF8(eml.Domain)
+	eml.Email = tools.SanitizeUTF8(eml.Email)
+	eml.NearText = tools.SanitizeUTF8(eml.NearText)
+}
+
+// Sanitize removes null bytes and invalid UTF-8 sequences from all string fields
+func (u *URL) Sanitize() {
+	u.Domain = tools.SanitizeUTF8(u.Domain)
+	u.Url = tools.SanitizeUTF8(u.Url)
+	u.NearText = tools.SanitizeUTF8(u.NearText)
 }
