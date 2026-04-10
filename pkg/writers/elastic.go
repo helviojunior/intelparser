@@ -159,9 +159,11 @@ func NewElasticWriter(uri string) (*ElasticWriter, error) {
 	// Check username and password from Environment Variables
 	if v1, ok := os.LookupEnv("INTELPARSER_OUTPUT_USERNAME"); ok {
 		conf.Username = v1;
+		logger.Infof("Setting username %s using env.INTELPARSER_OUTPUT_USERNAME", v1)
 	}
 	if v1, ok := os.LookupEnv("INTELPARSER_OUTPUT_PASSWORD"); ok {
 		conf.Password = v1;
+		logger.Infof("Setting password using env.INTELPARSER_OUTPUT_PASSWORD")
 	}
 
 	if username != "" && password != "" {
