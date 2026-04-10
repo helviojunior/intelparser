@@ -203,14 +203,14 @@ func convertFromDbTo(fromUri string, writer writers.Writer, status *ConvStatus) 
 
     sql_files := "id >= 0 "
     if opts.IndexedDateFilter != nil {
-        sql_files += " AND [indexed_at] >= '" + opts.IndexedDateFilter.Format("2006-01-02") + "' "
+        sql_files += " AND indexed_at >= '" + opts.IndexedDateFilter.Format("2006-01-02") + "' "
     }
 
     rows, err := conn.Model(&models.File{}).Where(sql_files).Rows()
-    defer rows.Close()
     if err != nil {
         return err
     }
+    defer rows.Close()
     wg := sync.WaitGroup{}
 
     var file models.File
@@ -219,31 +219,31 @@ func convertFromDbTo(fromUri string, writer writers.Writer, status *ConvStatus) 
 
         logger := log.With("id", file.ID, "file", file.FileName)
 
-        sql1 := "file_id == " + strconv.FormatUint(uint64(file.ID), 10)
+        sql1 := "file_id = " + strconv.FormatUint(uint64(file.ID), 10)
         if opts.DateFilter != nil {
-            sql1 += " AND [time] >= '" + opts.DateFilter.Format("2006-01-02") + "' "
+            sql1 += " AND time >= '" + opts.DateFilter.Format("2006-01-02") + "' "
         }
 
         sqlCred := sql1 + prepareSQL([]string{"username", "url", "password"})
         rCred, err := conn.Model(&models.Credential{}).Where(sqlCred).Rows()
-        defer rCred.Close()
         if err != nil {
             return err
         }
+        defer rCred.Close()
 
         sqlEmail := sql1 + prepareSQL([]string{"email"})
         rEml, err := conn.Model(&models.Email{}).Where(sqlEmail).Rows()
-        defer rEml.Close()
         if err != nil {
             return err
         }
+        defer rEml.Close()
 
         sqlUrl := sql1 + prepareSQL([]string{"url"})
         rUrl, err := conn.Model(&models.URL{}).Where(sqlUrl).Rows()
-        defer rUrl.Close()
         if err != nil {
             return err
         }
+        defer rUrl.Close()
 
         newResult := file.Clone()
 
