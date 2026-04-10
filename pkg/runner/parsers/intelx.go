@@ -112,7 +112,7 @@ func (run *IntelxParser) ParseFile(thisRunner *runner.Runner, file runner.FileIt
 	result.MIMEType, _ = tools.GetMimeType(file.RealPath)
 
 	if run.conn != nil {
-		response := run.conn.Raw("SELECT count(id) as count from files WHERE failed = 0 AND file_name = ? AND fingerprint = ?", file_name_ext, result.Fingerprint)
+		response := run.conn.Raw("SELECT count(id) as count from files WHERE failed = false AND file_name = ? AND fingerprint = ?", file_name_ext, result.Fingerprint)
 	    if response != nil {
 	        var cnt int
 	        _ = response.Row().Scan(&cnt)

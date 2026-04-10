@@ -387,7 +387,7 @@ func (dwn *IntelXDownloader) DownloadResult(api *ixapi.IntelligenceXAPI, searchI
 
         if e.Name() != "Info.csv" {
         	id := strings.Replace(e.Name(), filepath.Ext(e.Name()), "", 1)
-        	dwn.conn.Raw("UPDATE intex_result_item SET filename = ?, downloaded = 1 WHERE system_id = ?", e.Name(), id)
+        	dwn.conn.Raw("UPDATE intex_result_item SET filename = ?, downloaded = true WHERE system_id = ?", e.Name(), id)
         	dwn.status.Downloaded++
         }else{
         	dstFileName = filepath.Join(dwn.tempFolder, "info_orig_" + tools.SafeFileNameWithRnd(searchID.String()) + ".csv")
@@ -517,7 +517,7 @@ func (dwn *IntelXDownloader) SearchNext() (int, error) {
 	api.Init("", dwn.apiKey)
 
 	qty = 0
-	response := dwn.conn.Raw("SELECT count(`id`) as qty, min(`date`) as min_date from intex_result_item")
+	response := dwn.conn.Raw("SELECT count(id) as qty, min(date) as min_date from intex_result_item")
     if response != nil {
     	log.Debug("Response...")
     	
