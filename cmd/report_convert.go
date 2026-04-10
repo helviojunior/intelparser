@@ -25,6 +25,7 @@ var convertCmdFlags = struct {
     fromFile  string
     fromDbUri string
     toFile    string
+    toDbUri   string
 
     fromExt string
     toExt   string
@@ -37,7 +38,7 @@ var convertCmd = &cobra.Command{
 
 Convert between SQLite and JSON Lines file formats.
 
-A --from-file (or --from-db-uri) and --to-file must be specified. The extension
+A --from-file (or --from-db-uri) and --to-file (or --to-db-uri) must be specified. The extension
 used for the specified filenames will be used to determine the conversion
 direction and target.`)),
     Example: `
@@ -45,7 +46,9 @@ direction and target.`)),
    - intelparser report convert --to-file data.jsonl --filter sec4us,webapi,hookchain
    - intelparser report convert --from-file intelparser.sqlite3 --to-file data.jsonl
    - intelparser report convert --from-file intelparser.jsonl --to-file db.sqlite3
-   - intelparser report convert --from-db-uri postgres://user:pass@host:5432/db --to-file data.jsonl`,
+   - intelparser report convert --from-db-uri postgres://user:pass@host:5432/db --to-file data.jsonl
+   - intelparser report convert --from-file data.jsonl --to-db-uri postgres://user:pass@host:5432/db
+   - intelparser report convert --from-db-uri postgres://user:pass@host:5432/srcdb --to-db-uri postgres://user:pass@host:5432/dstdb`,
     PreRunE: func(cmd *cobra.Command, args []string) error {
         var err error
 
@@ -60,16 +63,35 @@ direction and target.`)),
         if convertCmdFlags.fromDbUri != "" {
             convertCmdFlags.fromFile = ""
         }
-        if convertCmdFlags.toFile == "" {
-            return errors.New("to file not set")
+
+        toFileChanged := cmd.Flags().Changed("to-file")
+
+        if !toFileChanged && convertCmdFlags.toDbUri == "" {
+            return errors.New("a destination must be specified with --to-file or --to-db-uri")
+        } else if toFileChanged && convertCmdFlags.toDbUri != "" {
+            return errors.New("--to-file and --to-db-uri are mutually exclusive")
         }
 
-        convertCmdFlags.toFile, err = resolver.ResolveFullPath(convertCmdFlags.toFile)
-        if err != nil {
-            return err
+        if convertCmdFlags.toDbUri != "" {
+            convertCmdFlags.toFile = ""
         }
 
-        convertCmdFlags.toExt = strings.ToLower(filepath.Ext(convertCmdFlags.toFile))
+        if convertCmdFlags.toFile != "" {
+            convertCmdFlags.toFile, err = resolver.ResolveFullPath(convertCmdFlags.toFile)
+            if err != nil {
+                return err
+            }
+
+            convertCmdFlags.toExt = strings.ToLower(filepath.Ext(convertCmdFlags.toFile))
+
+            if convertCmdFlags.toExt == "" {
+                return errors.New("destination file must have extension")
+            }
+
+            if !tools.SliceHasStr(conversionCmdExtensions, convertCmdFlags.toExt) {
+                return errors.New("unsupported to file type")
+            }
+        }
 
         if convertCmdFlags.fromDbUri == "" {
             convertCmdFlags.fromFile, err = resolver.ResolveFullPath(convertCmdFlags.fromFile)
@@ -92,14 +114,6 @@ direction and target.`)),
             }
         }
 
-        if convertCmdFlags.toExt == "" {
-            return errors.New("destination file must have extension")
-        }
-
-        if !tools.SliceHasStr(conversionCmdExtensions, convertCmdFlags.toExt) {
-            return errors.New("unsupported to file type")
-        }
-
         return nil
     },
     Run: func(cmd *cobra.Command, args []string) {
@@ -108,7 +122,13 @@ direction and target.`)),
         var running bool
         wg := sync.WaitGroup{}
 
-        if convertCmdFlags.toExt == ".sqlite3" || convertCmdFlags.toExt == ".db" {
+        if convertCmdFlags.toDbUri != "" {
+            writer, err = writers.NewDbWriter(convertCmdFlags.toDbUri, false)
+            if err != nil {
+                log.Error("could not get a database writer up", "err", err)
+                return
+            }
+        } else if convertCmdFlags.toExt == ".sqlite3" || convertCmdFlags.toExt == ".db" {
             writer, err = writers.NewDbWriter(fmt.Sprintf("sqlite:///%s", convertCmdFlags.toFile), false)
             if err != nil {
                 log.Error("could not get a database writer up", "err", err)
@@ -199,7 +219,7 @@ direction and target.`)),
             tools.FormatIntComma(status.Email),
         )
 
-        if (status.Credential + status.Url + status.Email) == 0 {
+        if (status.Credential + status.Url + status.Email) == 0 && convertCmdFlags.toFile != "" {
             log.Warn("No records were converted. Cleaning up output file...")
 
             err = os.Remove(convertCmdFlags.toFile)
@@ -217,4 +237,5 @@ func init() {
     convertCmd.Flags().StringVar(&convertCmdFlags.fromFile, "from-file", "~/.intelparser.db", "The file to convert from")
     convertCmd.Flags().StringVar(&convertCmdFlags.fromDbUri, "from-db-uri", "", "The database URI to convert from. Supports SQLite, Postgres, and MySQL (e.g., postgres://user:pass@host:port/db)")
     convertCmd.Flags().StringVar(&convertCmdFlags.toFile, "to-file", "", "The file to convert to. Use .sqlite3 for conversion to SQLite, and .jsonl for conversion to JSON Lines")
+    convertCmd.Flags().StringVar(&convertCmdFlags.toDbUri, "to-db-uri", "", "The database URI to convert to. Supports SQLite, Postgres, and MySQL (e.g., postgres://user:pass@host:port/db)")
 }
