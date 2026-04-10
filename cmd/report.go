@@ -187,12 +187,12 @@ func clearScreen(){
     ascii.ShowCursor()
 }
 
-func convertFromDbTo(from string, writer writers.Writer, status *ConvStatus) error {
+func convertFromDbTo(fromUri string, writer writers.Writer, status *ConvStatus) error {
     defer clearScreen()
     ascii.HideCursor()
 
 	log.Info("starting conversion...")
-    conn, err := database.Connection(fmt.Sprintf("sqlite:///%s", from), true, false)
+    conn, err := database.Connection(fromUri, true, false)
     if err != nil {
         return err
     }

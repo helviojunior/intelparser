@@ -2,6 +2,7 @@ package cmd
 
 import (
     "errors"
+    "fmt"
     "path/filepath"
     "strings"
     "sync"
@@ -21,8 +22,9 @@ import (
 
 var elkCmdExtensions = []string{".sqlite3", ".db", ".jsonl"}
 var elkCmdFlags = struct {
-    fromFile string
-    fromExt string
+    fromFile  string
+    fromDbUri string
+    fromExt   string
     elasticURI string
 }{}
 var elkCmd = &cobra.Command{
@@ -33,35 +35,51 @@ var elkCmd = &cobra.Command{
 
 Sync from local SQLite or JSON Lines file formats to Elastic.
 
-A --from-file and --elasticsearch-uri must be specified.`)),
+A --from-file (or --from-db-uri) and --elasticsearch-uri must be specified.`)),
     Example: ascii.Markdown(`
    - intelparser report elastic --elasticsearch-uri http://localhost:9200/intelparser
    - intelparser report elastic --elasticsearch-uri http://localhost:9200/intelparser --filter sec4us,webapi,hookchain
    - intelparser report elastic --from-file intelparser.sqlite3 --elasticsearch-uri http://localhost:9200/intelparser
-   - intelparser report elastic --from-file intelparser.jsonl --elasticsearch-uri http://localhost:9200/intelparser`),
+   - intelparser report elastic --from-file intelparser.jsonl --elasticsearch-uri http://localhost:9200/intelparser
+   - intelparser report elastic --from-db-uri postgres://user:pass@host:5432/db --elasticsearch-uri http://localhost:9200/intelparser`),
     PreRunE: func(cmd *cobra.Command, args []string) error {
         var err error
-        if elkCmdFlags.fromFile == "" {
-            return errors.New("from file not set")
+
+        fromFileChanged := cmd.Flags().Changed("from-file")
+
+        if !fromFileChanged && elkCmdFlags.fromDbUri == "" {
+            // Using default --from-file value, that's fine
+        } else if fromFileChanged && elkCmdFlags.fromDbUri != "" {
+            return errors.New("--from-file and --from-db-uri are mutually exclusive")
         }
 
-        elkCmdFlags.fromFile, err = resolver.ResolveFullPath(elkCmdFlags.fromFile)
-        if err != nil {
-            return err
+        if elkCmdFlags.fromDbUri != "" {
+            elkCmdFlags.fromFile = ""
         }
 
-        elkCmdFlags.fromExt = strings.ToLower(filepath.Ext(elkCmdFlags.fromFile))
+        if elkCmdFlags.fromDbUri == "" {
+            if elkCmdFlags.fromFile == "" {
+                return errors.New("a source must be specified with --from-file or --from-db-uri")
+            }
 
-        if elkCmdFlags.fromExt == "" {
-            return errors.New("source file must have extension")
-        }
+            elkCmdFlags.fromFile, err = resolver.ResolveFullPath(elkCmdFlags.fromFile)
+            if err != nil {
+                return err
+            }
 
-        if !tools.SliceHasStr(elkCmdExtensions, elkCmdFlags.fromExt) {
-            return errors.New("unsupported from file type")
-        }
+            elkCmdFlags.fromExt = strings.ToLower(filepath.Ext(elkCmdFlags.fromFile))
 
-        if !tools.FileExists(elkCmdFlags.fromFile) {
-            return errors.New("Source file not found") 
+            if elkCmdFlags.fromExt == "" {
+                return errors.New("source file must have extension")
+            }
+
+            if !tools.SliceHasStr(elkCmdExtensions, elkCmdFlags.fromExt) {
+                return errors.New("unsupported from file type")
+            }
+
+            if !tools.FileExists(elkCmdFlags.fromFile) {
+                return errors.New("Source file not found")
+            }
         }
 
         return nil
@@ -105,8 +123,13 @@ A --from-file and --elasticsearch-uri must be specified.`)),
         wg.Add(1)
         go func() {
             defer wg.Done()
-            if elkCmdFlags.fromExt == ".sqlite3" || elkCmdFlags.fromExt == ".db" {
-                if err := convertFromDbTo(elkCmdFlags.fromFile, writer, status); err != nil {
+            if elkCmdFlags.fromDbUri != "" {
+                if err := convertFromDbTo(elkCmdFlags.fromDbUri, writer, status); err != nil {
+                    log.Error("failed to convert from database", "err", err)
+                    return
+                }
+            } else if elkCmdFlags.fromExt == ".sqlite3" || elkCmdFlags.fromExt == ".db" {
+                if err := convertFromDbTo(fmt.Sprintf("sqlite:///%s", elkCmdFlags.fromFile), writer, status); err != nil {
                     log.Error("failed to convert from SQLite", "err", err)
                     return
                 }
@@ -114,7 +137,7 @@ A --from-file and --elasticsearch-uri must be specified.`)),
                 if err := convertFromJsonlTo(elkCmdFlags.fromFile, writer, status); err != nil {
                     log.Error("failed to convert from JSON Lines", "err", err)
                     return
-                } 
+                }
             }
             running = false
             time.Sleep(time.Duration(time.Second/4))
@@ -147,6 +170,7 @@ func init() {
     reportCmd.AddCommand(elkCmd)
 
     elkCmd.Flags().StringVar(&elkCmdFlags.fromFile, "from-file", "~/.intelparser.db", "The file to convert from. Use .sqlite3 for conversion from SQLite, and .jsonl for conversion from JSON Lines")
+    elkCmd.Flags().StringVar(&elkCmdFlags.fromDbUri, "from-db-uri", "", "The database URI to convert from. Supports SQLite, Postgres, and MySQL (e.g., postgres://user:pass@host:port/db)")
     elkCmd.Flags().StringVar(&elkCmdFlags.elasticURI, "elasticsearch-uri", "http://localhost:9200/intelparser", "The elastic search URI to use. (e.g., http://user:pass@host:9200/index)")
 
 }
