@@ -14,11 +14,11 @@ require (
 	github.com/h2non/filetype v1.1.3
 	github.com/helviojunior/gopathresolver v0.1.6
 	github.com/muesli/termenv v0.16.0
-	github.com/prometheus/procfs v0.19.2
+	github.com/prometheus/procfs v0.20.1
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/exp v0.0.0-20241215155358-4a5509556b9e
-	golang.org/x/sys v0.41.0
-	golang.org/x/term v0.39.0
+	golang.org/x/sys v0.42.0
+	golang.org/x/term v0.41.0
 	gorm.io/driver/mysql v1.6.0
 	gorm.io/driver/postgres v1.6.0
 	gorm.io/gorm v1.31.1
