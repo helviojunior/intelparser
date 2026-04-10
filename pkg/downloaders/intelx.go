@@ -61,6 +61,7 @@ type IntelXDownloaderStatus struct {
 	Duplicated int
 	TotalBytes int64
 	StateBytes int64
+	ResultCode int
 	Spin string
 	Step string
 	Running bool
@@ -612,6 +613,7 @@ func (dwn *IntelXDownloader) SearchNext() (int, error) {
 			if err != nil {
 				log.Error("Error downloading files", "err", err)
 				dwn_error = err
+				dwn.status.ResultCode = 5
 			}
 			api.SearchTerminate(context.Background(), *searchID)
 			downloading = false

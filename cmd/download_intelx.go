@@ -150,6 +150,9 @@ or by setting the IXAPIKEY environment variable.
             status.Duplicated += st.Duplicated
             status.Downloaded += st.Downloaded
             status.TotalBytes += st.TotalBytes
+            if st.ResultCode != 0 {
+                status.ResultCode = st.ResultCode
+            }
 
           }
         }()
@@ -166,13 +169,17 @@ or by setting the IXAPIKEY environment variable.
         st += "     -> Downloaded Files.: %s\n"
         st += "     -> Bytes downloaded.: %s\n"
 
-        log.Infof(st, 
+        log.Infof(st,
             out.Format("15:04:05"),
-            tools.FormatIntComma(status.TotalFiles), 
+            tools.FormatIntComma(status.TotalFiles),
             tools.FormatIntComma(status.Duplicated),
             tools.FormatIntComma(status.Downloaded),
             tools.Bytes(uint64(status.TotalBytes)),
         )
+
+        if status.ResultCode != 0 {
+            os.Exit(status.ResultCode)
+        }
 
     },
 }
