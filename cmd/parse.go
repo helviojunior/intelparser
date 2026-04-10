@@ -59,6 +59,22 @@ var parserCmd = &cobra.Command{
             os.Exit(2)
         }
 
+        if opts.Writer.ControlDbURI != "" {
+            if strings.Contains(opts.Writer.ControlDbURI, "sqlite://") {
+                fileName := strings.Replace(opts.Writer.ControlDbURI, "sqlite:///", "", -1)
+                fileName = strings.Replace(fileName, "sqlite://", "", -1)
+
+                fp, err := resolver.ResolveFullPath(fileName)
+                if err != nil {
+                    return err
+                }
+
+                opts.Writer.GlobalDbURI = "sqlite:///" + fp
+            }else{
+                opts.Writer.GlobalDbURI = opts.Writer.ControlDbURI
+            }
+        }
+
         if opts.Writer.NoControlDb {
             opts.Writer.GlobalDbURI = "sqlite:///"+ tools.TempFileName(tempFolder, "intelparser_", ".db")
         }
@@ -159,12 +175,14 @@ func init() {
 
     parserCmd.PersistentFlags().IntVarP(&opts.Parser.Threads, "threads", "t", 10, "Number of concurrent threads (goroutines) to use")
     
-    parserCmd.PersistentFlags().BoolVar(&opts.Writer.NoControlDb, "disable-control-db", false, "Disable utilization of database ~/.intelparser.db.")
+    parserCmd.PersistentFlags().BoolVar(&opts.Writer.NoControlDb, "disable-control-db", false, "Disable utilization of control database.")
     parserCmd.PersistentFlags().BoolVar(&opts.StoreLocalWorkspace, "local-workspace", false, "Use execution path to store workspace files")
     
     parserCmd.PersistentFlags().IntVar(&opts.Parser.NearTextSize, "neartext-size", 50, "Defines how much data should be captured before and after the matching text segment")
     parserCmd.PersistentFlags().BoolVar(&opts.Parser.StoreNearText, "store-neartext", false, "Stores text near rule matches for context. (warning: may drastically increase storage usage!)")
 
+    parserCmd.PersistentFlags().StringVar(&opts.Writer.ControlDbURI, "control-db-uri", "", "The database URI to use. Supports SQLite, Postgres, and MySQL (e.g., postgres://user:pass@host:port/db)")
+    
     parserCmd.PersistentFlags().BoolVar(&opts.Writer.Db, "write-db", false, "Write results to a SQLite database")
     parserCmd.PersistentFlags().StringVar(&opts.Writer.DbURI, "write-db-uri", "sqlite:///intelparser.sqlite3", "The database URI to use. Supports SQLite, Postgres, and MySQL (e.g., postgres://user:pass@host:port/db)")
     parserCmd.PersistentFlags().BoolVar(&opts.Writer.DbDebug, "write-db-enable-debug", false, "Enable database query debug logging (warning: verbose!)")

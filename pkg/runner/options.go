@@ -42,6 +42,7 @@ type Writer struct {
     WorkingPath  string
     NoControlDb bool
     GlobalDbURI string
+    ControlDbURI string
     Db        bool
     DbURI     string
     DbDebug   bool // enables verbose database logs
