@@ -6,7 +6,7 @@ require (
 	github.com/BobuSumisu/aho-corasick v1.0.3
 	github.com/charmbracelet/glamour v1.0.0
 	github.com/charmbracelet/lipgloss v1.1.1-0.20250404203927-76690c660834
-	github.com/charmbracelet/log v0.4.2
+	github.com/charmbracelet/log v1.0.0
 	github.com/elastic/go-elasticsearch/v8 v8.19.3
 	github.com/glebarez/sqlite v1.11.0
 	github.com/go-dedup/simhash v0.0.0-20170904020510-9ecaca7b509c
@@ -40,7 +40,7 @@ require (
 	github.com/glebarez/go-sqlite v1.22.0 // indirect
 	github.com/go-dedup/megophone v0.0.0-20170830025436-f01be21026f5 // indirect
 	github.com/go-dedup/text v0.0.0-20170907015346-8bb1b95e3cb7 // indirect
-	github.com/go-logfmt/logfmt v0.6.0 // indirect
+	github.com/go-logfmt/logfmt v0.6.1 // indirect
 	github.com/go-logr/logr v1.4.2 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-sql-driver/mysql v1.8.1 // indirect
