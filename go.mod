@@ -6,7 +6,7 @@ require (
 	github.com/BobuSumisu/aho-corasick v1.0.3
 	github.com/charmbracelet/glamour v1.0.0
 	github.com/charmbracelet/lipgloss v1.1.1-0.20250404203927-76690c660834
-	github.com/charmbracelet/log v0.4.2
+	github.com/charmbracelet/log v1.0.0
 	github.com/elastic/go-elasticsearch/v8 v8.19.3
 	github.com/glebarez/sqlite v1.11.0
 	github.com/go-dedup/simhash v0.0.0-20170904020510-9ecaca7b509c
@@ -17,8 +17,8 @@ require (
 	github.com/prometheus/procfs v0.20.1
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/exp v0.0.0-20241215155358-4a5509556b9e
-	golang.org/x/sys v0.42.0
-	golang.org/x/term v0.41.0
+	golang.org/x/sys v0.43.0
+	golang.org/x/term v0.42.0
 	gorm.io/driver/mysql v1.6.0
 	gorm.io/driver/postgres v1.6.0
 	gorm.io/gorm v1.31.1
