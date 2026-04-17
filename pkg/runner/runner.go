@@ -309,10 +309,31 @@ func (run *Runner) Run() Status {
 	}
 
 	wg.Wait()
+
+	// Drain any asynchronous writers before we mark execution as done, so the
+	// reported statistics reflect data actually persisted downstream.
+	for _, w := range run.writers {
+		if fw, ok := w.(writers.FlushableWriter); ok {
+			if err := fw.Flush(); err != nil {
+				run.log.Error("writer flush failed", "err", err)
+			}
+		}
+	}
+
+	// Let writers emit their end-of-run summary (tables, totals, etc.) after
+	// the flush completed.
+	for _, w := range run.writers {
+		if fw, ok := w.(writers.FinalizableWriter); ok {
+			if err := fw.Finalize(); err != nil {
+				run.log.Error("writer finalize failed", "err", err)
+			}
+		}
+	}
+
 	run.status.Running = false
 	swg.Wait()
 
-    //fmt.Fprintf(os.Stderr, "\n%s\n%s\r", 
+    //fmt.Fprintf(os.Stderr, "\n%s\n%s\r",
     //    "                                                                                ",
     //    "                                                                                ",
     //)

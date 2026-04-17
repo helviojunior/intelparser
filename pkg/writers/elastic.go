@@ -7,6 +7,8 @@ import (
 	"math"
 	"fmt"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"context"
 	"errors"
 	"bytes"
@@ -28,11 +30,48 @@ import (
 var elkExludedFields = []string{"failed", "failed_reason", "near_text"}
 var elkBulkCount = 200
 var elkBulkMaxSize = 5 * 1024 * 1024
+var elkWorkers = 4
+var elkQueueSize = 1024
+var elkRefreshInterval = "30s"
+var elkTranslogDurability = "async"
+var elkReplicas = -1 // -1 means "do not change"
+
+// queueItem wraps a File with the timestamp it was enqueued at, so workers
+// can measure queue-wait time (producer-to-consumer latency).
+type queueItem struct {
+	file       *models.File
+	enqueuedAt time.Time
+}
 
 // JsonWriter is a JSON lines writer
 type ElasticWriter struct {
 	Client *elk.Client
 	Index string
+
+	// debug toggles the log level of operational (per-bulk, per-file, periodic
+	// metrics) messages. When true they are emitted at Info; when false they
+	// are emitted at Debug and are invisible unless global --debug is set.
+	debug bool
+
+	queue    chan *queueItem
+	wg       sync.WaitGroup
+	closed   atomic.Bool
+	failures atomic.Int64
+
+	// Metrics (monotonically increasing, read atomically).
+	metBulks       atomic.Int64
+	metBulkRetries atomic.Int64
+	metDocs        atomic.Int64
+	metBytes       atomic.Int64
+	metLatencyNs   atomic.Int64 // sum of per-request bulk durations
+	metLatencyMax  atomic.Int64 // max observed bulk duration
+	metFiles       atomic.Int64
+	metFileTimeNs  atomic.Int64 // sum of writeSync durations
+	metQueueWaitNs atomic.Int64 // sum of queue-wait durations
+
+	startedAt    time.Time
+	stopReporter chan struct{}
+	reporterWG   sync.WaitGroup
 }
 
 type bulkResponse struct {
@@ -107,8 +146,10 @@ func (i Interceptor) RoundTrip(req *http.Request) (*http.Response, error) {
 	return resp, err
 }
 
-// NewJsonWriter return a new Json lines writer
-func NewElasticWriter(uri string) (*ElasticWriter, error) {
+// NewElasticWriter returns a new Elasticsearch writer.
+// When debug is true, operational logs are emitted at Info level; otherwise
+// they are emitted at Debug level.
+func NewElasticWriter(uri string, debug bool) (*ElasticWriter, error) {
 
 	u, err := url.Parse(uri)
 	if err != nil {
@@ -130,6 +171,7 @@ func NewElasticWriter(uri string) (*ElasticWriter, error) {
 
 	wr := &ElasticWriter{
 		Index: index_name,
+		debug: debug,
 	}
 
 	conf := elk.Config{
@@ -140,18 +182,27 @@ func NewElasticWriter(uri string) (*ElasticWriter, error) {
         //Password: password,
         //CACert:   cert,
 		RetryOnStatus: []int{429, 502, 503, 504},
+		MaxRetries:    5,
 		RetryBackoff:  func(i int) time.Duration {
 			// A simple exponential delay
 			d := time.Duration(math.Exp2(float64(i))) * time.Second
-			logger.Debugf("Elastic retry, attempt: %d | Sleeping for %s...\n", i, d)
+			if debug {
+				logger.Infof("Elastic retry, attempt: %d | Sleeping for %s...", i, d)
+			} else {
+				logger.Debugf("Elastic retry, attempt: %d | Sleeping for %s...", i, d)
+			}
 			return d
 		},
+		CompressRequestBody: true,
 		Transport: &Interceptor{
 			&http.Transport{
-				MaxIdleConns:       10,
-			    IdleConnTimeout:    10 * time.Second,
-			    DisableCompression: true,
-			    TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+				MaxIdleConns:        256,
+				MaxIdleConnsPerHost: 64,
+				MaxConnsPerHost:     64,
+			    IdleConnTimeout:     90 * time.Second,
+			    DisableCompression:  false,
+			    ForceAttemptHTTP2:   true,
+			    TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
 			},
 		},
 	}
@@ -197,7 +248,44 @@ func NewElasticWriter(uri string) (*ElasticWriter, error) {
 			if i1 > 4094 {
 				logger.Infof("Setting maximum ELK bulk size as %s using env.ELK_BULK_BYTES", tools.Bytes(uint64(i1)))
 				elkBulkMaxSize = int(i1)
-			}  
+			}
+		}
+	}
+
+	if v1, ok := os.LookupEnv("ELK_WORKERS"); ok {
+		if i1, err := strconv.ParseInt(v1, 10, 32); err == nil {
+			if i1 >= 1 && i1 <= 64 {
+				logger.Infof("Setting ELK writer workers to %d using env.ELK_WORKERS", i1)
+				elkWorkers = int(i1)
+			}
+		}
+	}
+
+	if v1, ok := os.LookupEnv("ELK_QUEUE_SIZE"); ok {
+		if i1, err := strconv.ParseInt(v1, 10, 32); err == nil {
+			if i1 >= 1 && i1 <= 100000 {
+				logger.Infof("Setting ELK writer queue size to %d using env.ELK_QUEUE_SIZE", i1)
+				elkQueueSize = int(i1)
+			}
+		}
+	}
+
+	if v1, ok := os.LookupEnv("ELK_REFRESH_INTERVAL"); ok {
+		logger.Infof("Setting ELK refresh_interval to %s using env.ELK_REFRESH_INTERVAL", v1)
+		elkRefreshInterval = v1
+	}
+
+	if v1, ok := os.LookupEnv("ELK_TRANSLOG_DURABILITY"); ok {
+		logger.Infof("Setting ELK translog.durability to %s using env.ELK_TRANSLOG_DURABILITY", v1)
+		elkTranslogDurability = v1
+	}
+
+	if v1, ok := os.LookupEnv("ELK_REPLICAS"); ok {
+		if i1, err := strconv.ParseInt(v1, 10, 32); err == nil {
+			if i1 >= 0 && i1 <= 10 {
+				logger.Infof("Setting ELK number_of_replicas to %d using env.ELK_REPLICAS", i1)
+				elkReplicas = int(i1)
+			}
 		}
 	}
 
@@ -307,163 +395,497 @@ func NewElasticWriter(uri string) (*ElasticWriter, error) {
 	    return nil, err
 	}
 
+	// Apply ingest-friendly settings to all managed indices (new and existing).
+	for _, idx := range []string{wr.Index, wr.Index + "_creds", wr.Index + "_urls", wr.Index + "_emails"} {
+		if err := wr.applyIngestSettings(idx); err != nil {
+			logger.Warnf("Could not apply ingest settings to %s: %s", idx, err)
+		}
+	}
+
+	// Start async worker pool and metrics reporter.
+	wr.queue = make(chan *queueItem, elkQueueSize)
+	wr.stopReporter = make(chan struct{})
+	wr.startedAt = time.Now()
+	logger.Infof("Starting ELK writer with %d workers (queue=%d, bulk=%d docs/%s)",
+		elkWorkers, elkQueueSize, elkBulkCount, tools.Bytes(uint64(elkBulkMaxSize)))
+	for i := 0; i < elkWorkers; i++ {
+		wr.wg.Add(1)
+		go wr.worker()
+	}
+	wr.reporterWG.Add(1)
+	go wr.metricsReporter()
+
 	return wr, nil
 }
 
-// Write JSON lines to a file
-func (ew *ElasticWriter) Write(result *models.File) error {
-	var err error
+// applyIngestSettings tunes an index for bulk ingestion throughput.
+// Applied once on writer init so it also updates existing indices.
+func (ew *ElasticWriter) applyIngestSettings(index string) error {
+	body := map[string]interface{}{
+		"index": map[string]interface{}{
+			"refresh_interval": elkRefreshInterval,
+			"translog": map[string]interface{}{
+				"durability": elkTranslogDurability,
+			},
+		},
+	}
+	if elkReplicas >= 0 {
+		body["index"].(map[string]interface{})["number_of_replicas"] = elkReplicas
+	}
 
-    logger.Debugf("Integrating elastic: %d credentials, %d e-mails, %d urls", 
-    	len(result.Credentials),  len(result.Emails), len(result.URLs))
+	b, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+
+	req := esapi.IndicesPutSettingsRequest{
+		Index: []string{index},
+		Body:  bytes.NewReader(b),
+	}
+	res, err := req.Do(context.Background(), ew.Client)
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close()
+
+	if res.IsError() {
+		return fmt.Errorf("status %d: %s", res.StatusCode, res.String())
+	}
+	ew.logf("Applied ingest settings to %s: %s", index, string(b))
+	return nil
+}
+
+// logf emits an operational log message at Info when the writer was created
+// with debug=true, or at Debug otherwise. Use for per-bulk / per-file /
+// periodic metrics logs that would otherwise be too noisy in Info.
+func (ew *ElasticWriter) logf(format string, args ...interface{}) {
+	if ew.debug {
+		logger.Infof(format, args...)
+	} else {
+		logger.Debugf(format, args...)
+	}
+}
+
+// Write enqueues the result for asynchronous ingestion by the worker pool.
+// Errors on the async path are logged and counted; they are not returned here.
+func (ew *ElasticWriter) Write(result *models.File) error {
+	if ew.closed.Load() {
+		return errors.New("ElasticWriter is closed")
+	}
+	// Shallow-copy the File so writeSync can null out the heavy slices on its
+	// local copy without racing with other writers that share the same pointer.
+	cp := *result
+	ew.queue <- &queueItem{file: &cp, enqueuedAt: time.Now()}
+	return nil
+}
+
+// worker consumes files from the queue and writes them synchronously.
+func (ew *ElasticWriter) worker() {
+	defer ew.wg.Done()
+	for item := range ew.queue {
+		wait := time.Since(item.enqueuedAt)
+		ew.metQueueWaitNs.Add(int64(wait))
+
+		start := time.Now()
+		err := ew.writeSync(item.file)
+		dur := time.Since(start)
+
+		ew.metFiles.Add(1)
+		ew.metFileTimeNs.Add(int64(dur))
+
+		if err != nil {
+			ew.failures.Add(1)
+			logger.Errorf("Elastic writer failure for %s: %s", item.file.FileName, err)
+			continue
+		}
+
+		ew.logf("ELK file done: %s queue_wait=%s write=%s q=%d/%d",
+			item.file.FileName, wait, dur, len(ew.queue), cap(ew.queue))
+	}
+}
+
+// Flush closes the queue and waits for all in-flight writes to complete.
+// Must be called once, after producers have stopped invoking Write.
+func (ew *ElasticWriter) Flush() error {
+	if !ew.closed.CompareAndSwap(false, true) {
+		return nil
+	}
+	qlen := len(ew.queue)
+	if qlen > 0 {
+		logger.Infof("Flushing ELK writer: %d file(s) pending in queue", qlen)
+	}
+	close(ew.queue)
+	ew.wg.Wait()
+
+	// Stop the metrics reporter and emit a final summary.
+	close(ew.stopReporter)
+	ew.reporterWG.Wait()
+	ew.logMetrics(true)
+
+	if n := ew.failures.Load(); n > 0 {
+		logger.Warnf("ELK writer finished with %d failure(s)", n)
+	}
+	return nil
+}
+
+// recordBulk atomically updates bulk-level metrics. Called by CreateDocBulk on
+// successful completion. dur is the duration of the successful HTTP request.
+func (ew *ElasticWriter) recordBulk(docs int, size int, dur time.Duration) {
+	ew.metBulks.Add(1)
+	ew.metDocs.Add(int64(docs))
+	ew.metBytes.Add(int64(size))
+	ew.metLatencyNs.Add(int64(dur))
+	// max latency via CAS loop
+	d := int64(dur)
+	for {
+		cur := ew.metLatencyMax.Load()
+		if d <= cur || ew.metLatencyMax.CompareAndSwap(cur, d) {
+			break
+		}
+	}
+}
+
+// metricsReporter emits a periodic summary of writer throughput / latency so
+// operators can spot whether the bottleneck is on the parser side (queue near
+// empty), on the writer side (queue full, high avg_bulk), or elsewhere.
+func (ew *ElasticWriter) metricsReporter() {
+	defer ew.reporterWG.Done()
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ew.stopReporter:
+			return
+		case <-ticker.C:
+			ew.logMetrics(false)
+		}
+	}
+}
+
+// logMetrics prints a one-line snapshot of accumulated counters. When final
+// is true the tag changes so the caller can spot the end-of-run summary in
+// logs.
+func (ew *ElasticWriter) logMetrics(final bool) {
+	bulks := ew.metBulks.Load()
+	docs := ew.metDocs.Load()
+	bytes := ew.metBytes.Load()
+	latSum := ew.metLatencyNs.Load()
+	latMax := ew.metLatencyMax.Load()
+	files := ew.metFiles.Load()
+	ftime := ew.metFileTimeNs.Load()
+	qwait := ew.metQueueWaitNs.Load()
+	errs := ew.failures.Load()
+	retries := ew.metBulkRetries.Load()
+
+	elapsed := time.Since(ew.startedAt).Seconds()
+	if elapsed < 0.001 {
+		elapsed = 0.001
+	}
+
+	var avgBulk, avgFile, avgQWait time.Duration
+	if bulks > 0 {
+		avgBulk = time.Duration(latSum / bulks)
+	}
+	if files > 0 {
+		avgFile = time.Duration(ftime / files)
+		avgQWait = time.Duration(qwait / files)
+	}
+
+	qlen, qcap := 0, 0
+	if ew.queue != nil {
+		qlen = len(ew.queue)
+		qcap = cap(ew.queue)
+	}
+
+	// The final summary is always emitted at Info level so end-of-run stats
+	// are visible regardless of the debug flag. Periodic snapshots follow the
+	// flag.
+	tag := "ELK metrics"
+	emit := ew.logf
+	if final {
+		tag = "ELK final metrics"
+		emit = logger.Infof
+	}
+
+	emit("%s: queue=%d/%d files=%d (%.1f/s) bulks=%d docs=%d (%.0f/s) bytes=%s (%s/s) avg_bulk=%s max_bulk=%s avg_file=%s avg_queue_wait=%s retries=%d errs=%d",
+		tag,
+		qlen, qcap,
+		files, float64(files)/elapsed,
+		bulks,
+		docs, float64(docs)/elapsed,
+		tools.Bytes(uint64(bytes)), tools.Bytes(uint64(float64(bytes)/elapsed)),
+		avgBulk, time.Duration(latMax),
+		avgFile, avgQWait,
+		retries, errs,
+	)
+}
+
+// Finalize renders a human-friendly end-of-run table with the writer's
+// aggregated ingestion statistics. Safe to call after Flush.
+func (ew *ElasticWriter) Finalize() error {
+	bulks := ew.metBulks.Load()
+	retries := ew.metBulkRetries.Load()
+	docs := ew.metDocs.Load()
+	sizeBytes := ew.metBytes.Load()
+	latSum := ew.metLatencyNs.Load()
+	latMax := ew.metLatencyMax.Load()
+	files := ew.metFiles.Load()
+	ftime := ew.metFileTimeNs.Load()
+	qwait := ew.metQueueWaitNs.Load()
+	errs := ew.failures.Load()
+
+	elapsed := time.Since(ew.startedAt)
+	elapsedSecs := elapsed.Seconds()
+	if elapsedSecs < 0.001 {
+		elapsedSecs = 0.001
+	}
+
+	var avgBulk, avgFile, avgQWait time.Duration
+	if bulks > 0 {
+		avgBulk = time.Duration(latSum / bulks)
+	}
+	if files > 0 {
+		avgFile = time.Duration(ftime / files)
+		avgQWait = time.Duration(qwait / files)
+	}
+
+	docsPerSec := float64(docs) / elapsedSecs
+	filesPerSec := float64(files) / elapsedSecs
+	bytesPerSec := float64(sizeBytes) / elapsedSecs
+
+	rows := [][2]string{
+		{"Elapsed time", elapsed.Truncate(time.Second).String()},
+		{"Files processed", fmt.Sprintf("%s (%.1f/s)",
+			fmtInt(files), filesPerSec)},
+		{"Bulks sent", fmt.Sprintf("%s (%s retries)",
+			fmtInt(bulks), fmtInt(retries))},
+		{"Documents indexed", fmt.Sprintf("%s (%s/s)",
+			fmtInt(docs), fmtRate(docsPerSec))},
+		{"Data sent", fmt.Sprintf("%s (%s/s)",
+			tools.Bytes(uint64(sizeBytes)), tools.Bytes(uint64(bytesPerSec)))},
+		{"Bulk latency", fmt.Sprintf("avg %s, max %s",
+			avgBulk.Truncate(time.Millisecond), time.Duration(latMax).Truncate(time.Millisecond))},
+		{"File write time (avg)", avgFile.Truncate(time.Millisecond).String()},
+		{"Queue wait (avg)", avgQWait.Truncate(time.Microsecond).String()},
+		{"Failures", fmtInt(errs)},
+	}
+
+	table := renderKVTable("ELK ingestion summary", rows)
+	// Print raw to stdout so the box-drawing characters are not mangled by
+	// a structured logger.
+	fmt.Println()
+	fmt.Print(table)
+	fmt.Println()
+	return nil
+}
+
+// fmtInt formats an integer with thousands separators.
+func fmtInt(n int64) string {
+	s := strconv.FormatInt(n, 10)
+	if n < 0 {
+		return "-" + fmtInt(-n)
+	}
+	if len(s) <= 3 {
+		return s
+	}
+	var b strings.Builder
+	pre := len(s) % 3
+	if pre > 0 {
+		b.WriteString(s[:pre])
+		if len(s) > pre {
+			b.WriteString(",")
+		}
+	}
+	for i := pre; i < len(s); i += 3 {
+		b.WriteString(s[i : i+3])
+		if i+3 < len(s) {
+			b.WriteString(",")
+		}
+	}
+	return b.String()
+}
+
+// fmtRate formats a rate with k/M suffix for readability.
+func fmtRate(r float64) string {
+	switch {
+	case r >= 1_000_000:
+		return fmt.Sprintf("%.1fM", r/1_000_000)
+	case r >= 1_000:
+		return fmt.Sprintf("%.1fk", r/1_000)
+	default:
+		return fmt.Sprintf("%.0f", r)
+	}
+}
+
+// renderKVTable builds a two-column box-drawing table with a "Métrica/Valor"
+// header, a row separator between every data row (to match the style shown
+// in the spec), and column widths auto-fit to the longest value.
+func renderKVTable(title string, rows [][2]string) string {
+	const keyHeader = "Métrica"
+	const valHeader = "Valor"
+
+	// runeLen returns the visual width in runes (assumes monospace with
+	// 1 cell per rune, good enough for ASCII + common latin extended).
+	runeLen := func(s string) int { return len([]rune(s)) }
+
+	maxK, maxV := runeLen(keyHeader), runeLen(valHeader)
+	for _, r := range rows {
+		if n := runeLen(r[0]); n > maxK {
+			maxK = n
+		}
+		if n := runeLen(r[1]); n > maxV {
+			maxV = n
+		}
+	}
+	// 1-space padding on each side of the cell.
+	kw := maxK + 2
+	vw := maxV + 2
+
+	top    := "┌" + strings.Repeat("─", kw) + "┬" + strings.Repeat("─", vw) + "┐"
+	sep    := "├" + strings.Repeat("─", kw) + "┼" + strings.Repeat("─", vw) + "┤"
+	bottom := "└" + strings.Repeat("─", kw) + "┴" + strings.Repeat("─", vw) + "┘"
+
+	center := func(s string, width int) string {
+		extra := width - runeLen(s)
+		if extra <= 0 {
+			return s
+		}
+		left := extra / 2
+		right := extra - left
+		return strings.Repeat(" ", left) + s + strings.Repeat(" ", right)
+	}
+	left := func(s string, width int) string {
+		pad := width - runeLen(s) - 2
+		if pad < 0 {
+			pad = 0
+		}
+		return " " + s + strings.Repeat(" ", pad) + " "
+	}
+
+	var b strings.Builder
+	if title != "" {
+		b.WriteString(title + "\n")
+	}
+	b.WriteString(top + "\n")
+	b.WriteString("│" + center(keyHeader, kw) + "│" + center(valHeader, vw) + "│\n")
+	b.WriteString(sep + "\n")
+	for i, r := range rows {
+		if i > 0 {
+			b.WriteString(sep + "\n")
+		}
+		b.WriteString("│" + left(r[0], kw) + "│" + left(r[1], vw) + "│\n")
+	}
+	b.WriteString(bottom + "\n")
+	return b.String()
+}
+
+// hashable is satisfied by Credential, URL and Email (see models.go). Used
+// by ingestItems to compute each doc's deterministic _id.
+type hashable interface {
+	CalcHash(string) string
+}
+
+// ingestItems marshals each item, attaches the standard envelope fields, and
+// ships the resulting docs to `index` in bulks respecting elkBulkCount and
+// elkBulkMaxSize. Kept generic so the per-index loops in writeSync stay
+// identical and can run concurrently.
+func ingestItems[T hashable](ew *ElasticWriter, index string, items []T,
+	fingerprint, bucket string) error {
 
 	docs := make(map[string][]byte)
-	docs_len := 0
+	docsLen := 0
 
-	//Credentials
-	for _, c := range result.Credentials {
-		b_data, err := json.Marshal(c)
+	for _, it := range items {
+		b, err := json.Marshal(it)
 		if err != nil {
-		    return err
+			return err
 		}
 
-		//cid := tools.GetHash(b_data)
-		cid := c.CalcHash(result.Fingerprint)
-		b_data, err = ew.MarshalAppend(b_data, map[string]interface{}{
-			"file_id": result.Fingerprint,
-			"bucket": result.Bucket,
+		cid := it.CalcHash(fingerprint)
+		b, err = ew.MarshalAppend(b, map[string]interface{}{
+			"file_id":     fingerprint,
+			"bucket":      bucket,
 			"fingerprint": cid,
 		})
 		if err != nil {
-		    return err
+			return err
 		}
 
-		//err = ew.CreateDoc(ew.Index + "_creds", b_data, cid)
-		//if err != nil {
-		//    return err
-		//}
+		docs[cid] = b
+		docsLen += len(b)
 
-		docs[cid] = b_data
-		docs_len += len(b_data)
-
-		if len(docs) >= elkBulkCount || docs_len >= elkBulkMaxSize {
-			err = ew.CreateDocBulk(ew.Index + "_creds", docs)
-			if err != nil {
-			    return err
+		if len(docs) >= elkBulkCount || docsLen >= elkBulkMaxSize {
+			if err := ew.CreateDocBulk(index, docs); err != nil {
+				return err
 			}
 			docs = make(map[string][]byte)
-			docs_len = 0
+			docsLen = 0
 		}
 	}
+
 	if len(docs) > 0 {
-		err = ew.CreateDocBulk(ew.Index + "_creds", docs)
-		if err != nil {
-		    return err
+		if err := ew.CreateDocBulk(index, docs); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// writeSync performs the actual bulk HTTP calls against OpenSearch.
+// The three per-type ingestions (creds / urls / emails) run concurrently so
+// big files don't serialize them behind each other; the single-doc file
+// write is done after all three complete.
+func (ew *ElasticWriter) writeSync(result *models.File) error {
+	ew.logf("Integrating elastic (file=%s): %d credentials, %d e-mails, %d urls",
+		result.FileName, len(result.Credentials), len(result.Emails), len(result.URLs))
+
+	var wg sync.WaitGroup
+	errs := make([]error, 3)
+
+	wg.Add(3)
+	go func() {
+		defer wg.Done()
+		errs[0] = ingestItems(ew, ew.Index+"_creds",
+			result.Credentials, result.Fingerprint, result.Bucket)
+	}()
+	go func() {
+		defer wg.Done()
+		errs[1] = ingestItems(ew, ew.Index+"_urls",
+			result.URLs, result.Fingerprint, result.Bucket)
+	}()
+	go func() {
+		defer wg.Done()
+		errs[2] = ingestItems(ew, ew.Index+"_emails",
+			result.Emails, result.Fingerprint, result.Bucket)
+	}()
+	wg.Wait()
+
+	for _, e := range errs {
+		if e != nil {
+			return e
 		}
 	}
 
-	//Urls
-	docs = make(map[string][]byte)
-	for _, u := range result.URLs {
-		b_data, err := json.Marshal(u)
-		if err != nil {
-		    return err
-		}
+	// File doc — build a local copy without the heavy slices so the caller's
+	// File (and any other writers sharing the pointer) are not mutated.
+	fileDoc := *result
+	fileDoc.Credentials = nil
+	fileDoc.Emails = nil
+	fileDoc.URLs = nil
 
-		cid := u.CalcHash(result.Fingerprint)
-		b_data, err = ew.MarshalAppend(b_data, map[string]interface{}{
-			"file_id": result.Fingerprint,
-			"bucket": result.Bucket,
-			"fingerprint": cid,
-		})
-		if err != nil {
-		    return err
-		}
-
-		//err = ew.CreateDoc(ew.Index + "_urls", b_data, cid)
-		//if err != nil {
-		//    return err
-		//}
-
-		docs[cid] = b_data
-		docs_len += len(b_data)
-
-		if len(docs) >= elkBulkCount || docs_len >= elkBulkMaxSize {
-			err = ew.CreateDocBulk(ew.Index + "_urls", docs)
-			if err != nil {
-			    return err
-			}
-			docs = make(map[string][]byte)
-			docs_len = 0
-		}
-	}
-	if len(docs) > 0 {
-		err = ew.CreateDocBulk(ew.Index + "_urls", docs)
-		if err != nil {
-		    return err
-		}
-	}
-
-	//Emails
-	docs = make(map[string][]byte)
-	docs_len = 0
-	for _, eml := range result.Emails {
-		b_data, err := json.Marshal(eml)
-		if err != nil {
-		    return err
-		}
-
-		cid := eml.CalcHash(result.Fingerprint)
-		b_data, err = ew.MarshalAppend(b_data, map[string]interface{}{
-			"file_id": result.Fingerprint,
-			"bucket": result.Bucket,
-			"fingerprint": cid,
-		})
-		if err != nil {
-		    return err
-		}
-
-		//err = ew.CreateDoc(ew.Index + "_emails", b_data, cid)
-		//if err != nil {
-		//    return err
-		//}
-
-		docs[cid] = b_data
-		docs_len += len(b_data)
-
-		if len(docs) >= elkBulkCount || docs_len >= elkBulkMaxSize {
-			err = ew.CreateDocBulk(ew.Index + "_emails", docs)
-			if err != nil {
-			    return err
-			}
-			docs = make(map[string][]byte)
-			docs_len = 0
-		}
-	}
-	if len(docs) > 0 {
-		err = ew.CreateDocBulk(ew.Index + "_emails", docs)
-		if err != nil {
-		    return err
-		}
-	}
-
-    //File
-    result.Credentials = []models.Credential{}
-    result.Emails = []models.Email{}
-    result.URLs = []models.URL{}
-
-	b_data, err := json.Marshal(*result) //ew.Marshal(*result)
+	b_data, err := json.Marshal(fileDoc)
 	if err != nil {
-	    return err
+		return err
 	}
 
-	res, err := ew.Client.Index(ew.Index, bytes.NewReader(b_data), ew.Client.Index.WithDocumentID(result.Fingerprint))
+	res, err := ew.Client.Index(ew.Index, bytes.NewReader(b_data),
+		ew.Client.Index.WithDocumentID(result.Fingerprint))
 	if err != nil {
-	    return err
+		return err
 	}
+	defer res.Body.Close()
 	if res.StatusCode != 200 && res.StatusCode != 201 {
-		fmt.Printf("Err: %s", res)
-		return errors.New("Cannot create/update document")
+		return fmt.Errorf("Cannot create/update file document: %s", res.String())
 	}
 
 	return nil
@@ -545,15 +967,21 @@ func (ew *ElasticWriter) CreateDocBulk(index string, docs map[string][]byte) err
 
     }
 
-    logger.Debugf("Elastic bulk %d docs, %d bytes", len(docs), size)
+    ew.logf("Elastic bulk start: %d docs, %s -> %s", len(docs), tools.Bytes(uint64(size)), index)
 
+    start := time.Now()
     for i := range 10 {
 
+        reqStart := time.Now()
         res, err := ew.Client.Bulk(bytes.NewReader(buf.Bytes()), ew.Client.Bulk.WithIndex(index))
         if err != nil {
             return err
         }
         defer res.Body.Close()
+        reqDur := time.Since(reqStart)
+        if i > 0 {
+            ew.metBulkRetries.Add(1)
+        }
 
         if res.IsError() {
 
@@ -577,31 +1005,39 @@ func (ew *ElasticWriter) CreateDocBulk(index string, docs map[string][]byte) err
             if err := json.NewDecoder(res.Body).Decode(&blk); err != nil {
                 return errors.New(fmt.Sprintf("Failure to to parse response body: %s", err))
             } else {
+                // Count item-level errors and log a single aggregated line
+                // instead of spamming one log per failed doc.
+                itemErrs := 0
+                var firstErr string
                 for _, d := range blk.Items {
-                    // ... so for any HTTP status above 201 ...
-                    //
                     if d.Index.Status > 201 {
-                        // ... and print the response status and error information ...
-                        logger.Debugf("  Error: [%d]: %s: %s: %s: %s",
-                            d.Index.Status,
-                            d.Index.Error.Type,
-                            d.Index.Error.Reason,
-                            d.Index.Error.Cause.Type,
-                            d.Index.Error.Cause.Reason,
-                        )
-                    } else {
-                        // ... otherwise increase the success counter.
-                        //
-                        
+                        itemErrs++
+                        if firstErr == "" {
+                            firstErr = fmt.Sprintf("[%d] %s: %s",
+                                d.Index.Status, d.Index.Error.Type, d.Index.Error.Reason)
+                        }
                     }
+                }
+                if itemErrs > 0 {
+                    ew.logf("Elastic bulk %s: %d/%d items failed (first: %s)",
+                        index, itemErrs, len(blk.Items), firstErr)
                 }
             }
         }
 
         if res.StatusCode == 200 || res.StatusCode == 201 {
+            total := time.Since(start)
+            bps := float64(size) / total.Seconds()
+            dps := float64(len(docs)) / total.Seconds()
+            ew.recordBulk(len(docs), size, reqDur)
+            ew.logf("Elastic bulk OK %s: %d docs, %s in %s (req=%s, %.0f docs/s, %s/s)",
+                index, len(docs), tools.Bytes(uint64(size)), total, reqDur,
+                dps, tools.Bytes(uint64(bps)))
             return nil
         }
 
+        ew.logf("Elastic bulk attempt %d on %s failed with status %d in %s; retrying",
+            i+1, index, res.StatusCode, reqDur)
         time.Sleep(1 * time.Second)
     }
 

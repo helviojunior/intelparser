@@ -26,6 +26,7 @@ var elkCmdFlags = struct {
     fromDbUri string
     fromExt   string
     elasticURI string
+    elasticDebug bool
 }{}
 var elkCmd = &cobra.Command{
     Use:   "elastic",
@@ -91,7 +92,7 @@ A --from-file (or --from-db-uri) and --elasticsearch-uri must be specified.`)),
         wg := sync.WaitGroup{}
 
         log.Info("Checking Elasticsearch indexes...")
-        writer, err = writers.NewElasticWriter(elkCmdFlags.elasticURI)
+        writer, err = writers.NewElasticWriter(elkCmdFlags.elasticURI, elkCmdFlags.elasticDebug)
         if err != nil {
             log.Error("could not get a elastic writer up", "err", err)
             return
@@ -172,5 +173,6 @@ func init() {
     elkCmd.Flags().StringVar(&elkCmdFlags.fromFile, "from-file", "~/.intelparser.db", "The file to convert from. Use .sqlite3 for conversion from SQLite, and .jsonl for conversion from JSON Lines")
     elkCmd.Flags().StringVar(&elkCmdFlags.fromDbUri, "from-db-uri", "", "The database URI to convert from. Supports SQLite, Postgres, and MySQL (e.g., postgres://user:pass@host:port/db)")
     elkCmd.Flags().StringVar(&elkCmdFlags.elasticURI, "elasticsearch-uri", "http://localhost:9200/intelparser", "The elastic search URI to use. (e.g., http://user:pass@host:9200/index)")
+    elkCmd.Flags().BoolVar(&elkCmdFlags.elasticDebug, "write-elasticsearch-enable-debug", false, "Enable ElasticSearch writer debug logging")
 
 }

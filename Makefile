@@ -25,10 +25,14 @@ help:		   ## Show this help.
 get-version:
 	@mkdir -p ${TARGET} ; \
 	if [ "$(VER)" = "dev" ]; then \
-		if [ -f ${TARGET}/.version ]; then \
-			echo "Using cached release tag from .version" ; \
+		if [ -f ${TARGET}/.version ] && [ -z "`find ${TARGET}/.version -mmin +1440 2>/dev/null`" ]; then \
+			echo "Using cached release tag from .version (< 24h old)" ; \
 		else \
-			echo "Fetching latest release tag from GitHub..." ; \
+			if [ -f ${TARGET}/.version ]; then \
+				echo "Cached .version is older than 24h, refreshing..." ; \
+			else \
+				echo "Fetching latest release tag from GitHub..." ; \
+			fi ; \
 			NAME=`echo ${PACKAGENAME} | sed 's/github.com//g'` ; \
 			curl -s https://api.github.com/repos$${NAME}/releases/latest \
 				| grep '"tag_name":' | head -n 1 | grep -oE '[0-9\.]+' > ${TARGET}/.version ; \

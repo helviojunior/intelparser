@@ -52,6 +52,7 @@ type Writer struct {
     JsonlFile string
     ELastic   bool
     ELasticURI string
+    ELasticDebug bool // promotes ElasticSearch writer operational logs from Debug to Info
     Stdout    bool
     None      bool
 }

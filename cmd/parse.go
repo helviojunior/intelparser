@@ -147,7 +147,7 @@ var parserCmd = &cobra.Command{
         }
 
         if opts.Writer.ELastic {
-            w, err := writers.NewElasticWriter(opts.Writer.ELasticURI)
+            w, err := writers.NewElasticWriter(opts.Writer.ELasticURI, opts.Writer.ELasticDebug)
             if err != nil {
                 return err
             }
@@ -194,5 +194,6 @@ func init() {
     parserCmd.PersistentFlags().BoolVar(&opts.Writer.None, "write-none", false, "Use an empty writer to silence warnings")
     parserCmd.PersistentFlags().BoolVar(&opts.Writer.ELastic, "write-elastic", false, "Write results to a SQLite database")
     parserCmd.PersistentFlags().StringVar(&opts.Writer.ELasticURI, "write-elasticsearch-uri", "http://localhost:9200/intelparser", "The elastic search URI to use. (e.g., http://user:pass@host:9200/index)")
+    parserCmd.PersistentFlags().BoolVar(&opts.Writer.ELasticDebug, "write-elasticsearch-enable-debug", false, "Enable ElasticSearch writer debug logging")
 
 }
