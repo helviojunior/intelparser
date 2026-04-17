@@ -673,9 +673,7 @@ func (ew *ElasticWriter) Finalize() error {
 	table := renderKVTable("ELK ingestion summary", rows)
 	// Print raw to stdout so the box-drawing characters are not mangled by
 	// a structured logger.
-	fmt.Println()
 	fmt.Print(table)
-	fmt.Println()
 	return nil
 }
 
@@ -769,10 +767,10 @@ func renderKVTable(title string, rows [][2]string) string {
 	b.WriteString(top + "\n")
 	b.WriteString("│" + center(keyHeader, kw) + "│" + center(valHeader, vw) + "│\n")
 	b.WriteString(sep + "\n")
-	for i, r := range rows {
-		if i > 0 {
-			b.WriteString(sep + "\n")
-		}
+	// Data rows are emitted back-to-back without a separator between them —
+	// keeps the table compact, especially when the surrounding pipeline
+	// prefixes every line with a timestamp.
+	for _, r := range rows {
 		b.WriteString("│" + left(r[0], kw) + "│" + left(r[1], vw) + "│\n")
 	}
 	b.WriteString(bottom + "\n")
