@@ -831,6 +831,23 @@ func (run *Runner) detectRule(fragment Fragment, currentRaw string, r *rules.Rul
 			loc.endLineIndex = matchIndex[1]
 		}
 
+		// The matched line. When it is very short (< 50 characters once the
+		// surrounding whitespace is stripped) it seldom carries enough context
+		// to be useful on its own, so we widen the captured window to 200 bytes
+		// before and 200 bytes after the line (clamped to the fragment bounds).
+		lineText := fragment.Raw[loc.startLineIndex:loc.endLineIndex]
+		if len(strings.Trim(lineText, "\r\n\t ")) < 50 {
+			ctxStart := loc.startLineIndex - 200
+			if ctxStart < 0 {
+				ctxStart = 0
+			}
+			ctxEnd := loc.endLineIndex + 200
+			if ctxEnd > len(fragment.Raw) {
+				ctxEnd = len(fragment.Raw)
+			}
+			lineText = fragment.Raw[ctxStart:ctxEnd]
+		}
+
 		finding := models.Finding{
 			Description: r.Description,
 			File:        fragment.FilePath,
@@ -843,7 +860,7 @@ func (run *Runner) detectRule(fragment Fragment, currentRaw string, r *rules.Rul
 			Secret:      secret,
 			Match:       secret,
 			Tags:        append(r.Tags, metaTags...),
-			Line:        fragment.Raw[loc.startLineIndex:loc.endLineIndex],
+			Line:        lineText,
 		}
 
 		// Set the value of |secret|, if the pattern contains at least one capture group.
