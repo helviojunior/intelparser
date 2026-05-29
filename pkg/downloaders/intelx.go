@@ -12,6 +12,7 @@ import (
     "archive/zip"
     "io"
     "encoding/csv"
+    "encoding/json"
     "fmt"
 	"reflect"
 	"strconv"
@@ -192,6 +193,13 @@ func (dwn *IntelXDownloader) Run() *IntelXDownloaderStatus {
 	        return dwn.status
 	    }
 
+	    log.Info("Writting " + tools.IntelXSearchResultsFile)
+	    dwn.status.Step = tools.IntelXSearchResultsFile
+	    if err := dwn.WriteInfoJson(); err != nil {
+	        log.Error("Error writting " + tools.IntelXSearchResultsFile, "err", err)
+	        return dwn.status
+	    }
+
 	    //Compress   
 	    dwn.status.Clear()
 	    log.Info("Compressing files")
@@ -322,6 +330,33 @@ func (dwn *IntelXDownloader) WriteInfoCsv() error {
 
     return nil
 	
+}
+
+// WriteInfoJson dumps every search result record (as returned by the IntelX
+// intelligent/search and persisted in the temp database) to a JSON file inside
+// the package. Unlike Info.csv it keeps the full record, and it is later scanned
+// for content by the parser together with the downloaded data files.
+func (dwn *IntelXDownloader) WriteInfoJson() error {
+	c, err := database.Connection("sqlite:///"+ dwn.dbName, false, false)
+	if err != nil {
+		log.Error("Error reconnecting to database", "err", err)
+		return err
+	}
+
+	var items []ixapi.SearchResult
+	if err := c.Model(&ixapi.SearchResult{}).Find(&items).Error; err != nil {
+		return err
+	}
+
+	file, err := os.OpenFile(filepath.Join(dwn.tempFolder, tools.IntelXSearchResultsFile), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	enc := json.NewEncoder(file)
+	enc.SetIndent("", "  ")
+	return enc.Encode(items)
 }
 
 func (dwn *IntelXDownloader) ClearScreen() {

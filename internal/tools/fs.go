@@ -21,6 +21,12 @@ import (
     "github.com/helviojunior/intelparser/internal/disk"
 )
 
+// IntelXSearchResultsFile is the name of the JSON file the downloader ships
+// inside the package alongside Info.csv, holding the raw records returned by
+// the IntelX intelligent/search. The parser scans it for content like any data
+// file, so intel that only appears in the search metadata is still captured.
+const IntelXSearchResultsFile = "intelx_search.json"
+
 func GetMimeType(s string) (string, error) {
 	file, err := os.Open(s)
 

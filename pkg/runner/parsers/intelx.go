@@ -107,6 +107,26 @@ func (run *IntelxParser) ParseFile(thisRunner *runner.Runner, file runner.FileIt
 		return result, err
 	}
 
+	// The downloader ships the raw search results as JSON. It is not an index
+	// file: scan its content like any data file so intel that only appears in
+	// the search metadata is captured, but give it curated metadata and never
+	// treat it as an orphan data file (which would log a spurious warning).
+	if strings.EqualFold(file_name_ext, tools.IntelXSearchResultsFile) {
+		result.Name = file.VirtualPath
+		result.Bucket = "IntelX » Search results"
+		result.MediaType = "application/json"
+		result.ProviderId = ""
+		result.Fingerprint, _ = tools.GetHashFromFile(file.RealPath)
+		result.MIMEType, _ = tools.GetMimeType(file.RealPath)
+
+		logger.Debug("Parsing IntelX search results JSON")
+		if err := thisRunner.DetectFile(result); err != nil {
+			return result, err
+		}
+		result.FilePath = file.VirtualPath
+		return result, nil
+	}
+
 	file_name := strings.ToLower(strings.TrimSuffix(file_name_ext, filepath.Ext(file_name_ext)))
 	result.Fingerprint, _ = tools.GetHashFromFile(file.RealPath)
 	result.MIMEType, _ = tools.GetMimeType(file.RealPath)
