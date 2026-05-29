@@ -84,11 +84,17 @@ func AddFolder(temp_folder string, folder_path string, zip_source string, virtua
     }
 
     for _, e := range entries {
-        if e.Name() != "Info.csv" && e.Name() != "info.sqlite3" {
-            scanRunner.Files <- runner.FileItem{
-                RealPath: filepath.Join(folder_path, e.Name()),
-                VirtualPath: filepath.Join(virtual_path, e.Name()),
-            }
+        // Skip the index (already parsed above), the control database and the
+        // per-download original Info.csv copies the downloader keeps under the
+        // "info_orig_<id>.csv" name. These are housekeeping artifacts, not data
+        // files; without this guard they reach the IntelX parser, fail the
+        // System ID lookup and emit a spurious "File is not present at info.csv".
+        if e.Name() == "Info.csv" || e.Name() == "info.sqlite3" || strings.HasPrefix(e.Name(), "info_orig_") {
+            continue
+        }
+        scanRunner.Files <- runner.FileItem{
+            RealPath: filepath.Join(folder_path, e.Name()),
+            VirtualPath: filepath.Join(virtual_path, e.Name()),
         }
     }
 
