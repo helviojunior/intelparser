@@ -38,6 +38,8 @@ type File struct {
 	Credentials []Credential `json:"credentials" gorm:"constraint:OnDelete:CASCADE"`
 	Emails      []Email      `json:"emails" gorm:"constraint:OnDelete:CASCADE"`
 	URLs        []URL        `json:"urls" gorm:"constraint:OnDelete:CASCADE"`
+	Phones      []Phone      `json:"phones" gorm:"constraint:OnDelete:CASCADE"`
+	Documents   []Document   `json:"documents" gorm:"constraint:OnDelete:CASCADE"`
 
 }
 
@@ -62,6 +64,41 @@ type Email struct {
 
 	Domain		string      `json:"domain"`
 	Email       string      `json:"email"`
+
+	NearText    string 		`json:"near_text"`
+}
+
+type Phone struct {
+	ID       uint `json:"id" gorm:"primarykey"`
+	FileID   uint `json:"file_id" gorm:"index:idx_phone"`
+
+	Time        time.Time   `json:"time"`
+
+	Country		string      `json:"country"`
+	Raw         string      `json:"raw"`
+	Phone       string      `json:"phone"`
+
+	Source      string      `json:"source"`
+	FileName    string      `json:"file_name"`
+	Line        string      `json:"line"`
+
+	NearText    string 		`json:"near_text"`
+}
+
+type Document struct {
+	ID       uint `json:"id" gorm:"primarykey"`
+	FileID   uint `json:"file_id" gorm:"index:idx_document"`
+
+	Time        time.Time   `json:"time"`
+
+	Raw         string      `json:"raw"`
+	Number      string      `json:"number"`
+	IsCPF       bool        `json:"is_cpf"`
+	IsCNPJ      bool        `json:"is_cnpj"`
+
+	Source      string      `json:"source"`
+	FileName    string      `json:"file_name"`
+	Line        string      `json:"line"`
 
 	NearText    string 		`json:"near_text"`
 }
@@ -128,6 +165,8 @@ type Finding struct {
     Credential Credential
     Email Email
     Url URL
+    Phone Phone
+    Document Document
 }
 
 
@@ -253,6 +292,56 @@ func (eml Email) MarshalJSON() ([]byte, error) {
 }
 
 
+/* Custom Marshaller for Phone */
+func (p Phone) MarshalJSON() ([]byte, error) {
+	return json.Marshal(&struct {
+		Time 	              string    `json:"time"`
+		Country   	    	  string   	`json:"country"`
+		Raw 		    	  string   	`json:"raw"`
+		Phone 		    	  string   	`json:"phone"`
+		Source 		    	  string   	`json:"source"`
+		FileName 	    	  string   	`json:"file_name"`
+		Line 		    	  string   	`json:"line"`
+		NearText	    	  string   	`json:"near_text"`
+
+	}{
+		Time 	    		: p.Time.Format(time.RFC3339),
+		Country 			: p.Country,
+		Raw 				: p.Raw,
+		Phone 				: p.Phone,
+		Source 				: p.Source,
+		FileName 			: p.FileName,
+		Line 				: p.Line,
+		NearText 			: p.NearText,
+	})
+}
+
+/* Custom Marshaller for Document */
+func (d Document) MarshalJSON() ([]byte, error) {
+	return json.Marshal(&struct {
+		Time 	              string    `json:"time"`
+		Raw 		    	  string   	`json:"raw"`
+		Number 		    	  string   	`json:"number"`
+		IsCPF   	    	  bool   	`json:"is_cpf"`
+		IsCNPJ   	    	  bool   	`json:"is_cnpj"`
+		Source 		    	  string   	`json:"source"`
+		FileName 	    	  string   	`json:"file_name"`
+		Line 		    	  string   	`json:"line"`
+		NearText	    	  string   	`json:"near_text"`
+
+	}{
+		Time 	    		: d.Time.Format(time.RFC3339),
+		Raw 				: d.Raw,
+		Number 				: d.Number,
+		IsCPF 				: d.IsCPF,
+		IsCNPJ 				: d.IsCNPJ,
+		Source 				: d.Source,
+		FileName 			: d.FileName,
+		Line 				: d.Line,
+		NearText 			: d.NearText,
+	})
+}
+
 func (cred Credential) CalcHash(additional_data string) string {
 	var hash string
 	_calcHash(&hash, additional_data, cred.Time, cred.Rule, cred.UserDomain, cred.Username, cred.Password, cred.Url)
@@ -268,6 +357,18 @@ func (u URL) CalcHash(additional_data string) string {
 func (eml Email) CalcHash(additional_data string) string {
 	var hash string
 	_calcHash(&hash, additional_data, eml.Time, eml.Email)
+	return hash
+}
+
+func (p Phone) CalcHash(additional_data string) string {
+	var hash string
+	_calcHash(&hash, additional_data, p.Time, p.Phone)
+	return hash
+}
+
+func (d Document) CalcHash(additional_data string) string {
+	var hash string
+	_calcHash(&hash, additional_data, d.Time, d.Number)
 	return hash
 }
 
@@ -314,6 +415,12 @@ func (file *File) Sanitize() {
 	for i := range file.URLs {
 		file.URLs[i].Sanitize()
 	}
+	for i := range file.Phones {
+		file.Phones[i].Sanitize()
+	}
+	for i := range file.Documents {
+		file.Documents[i].Sanitize()
+	}
 }
 
 // Sanitize removes null bytes and invalid UTF-8 sequences from all string fields
@@ -340,4 +447,25 @@ func (u *URL) Sanitize() {
 	u.Domain = tools.SanitizeUTF8(u.Domain)
 	u.Url = tools.SanitizeUTF8(u.Url)
 	u.NearText = tools.SanitizeUTF8(u.NearText)
+}
+
+// Sanitize removes null bytes and invalid UTF-8 sequences from all string fields
+func (p *Phone) Sanitize() {
+	p.Country = tools.SanitizeUTF8(p.Country)
+	p.Raw = tools.SanitizeUTF8(p.Raw)
+	p.Phone = tools.SanitizeUTF8(p.Phone)
+	p.Source = tools.SanitizeUTF8(p.Source)
+	p.FileName = tools.SanitizeUTF8(p.FileName)
+	p.Line = tools.SanitizeUTF8(p.Line)
+	p.NearText = tools.SanitizeUTF8(p.NearText)
+}
+
+// Sanitize removes null bytes and invalid UTF-8 sequences from all string fields
+func (d *Document) Sanitize() {
+	d.Raw = tools.SanitizeUTF8(d.Raw)
+	d.Number = tools.SanitizeUTF8(d.Number)
+	d.Source = tools.SanitizeUTF8(d.Source)
+	d.FileName = tools.SanitizeUTF8(d.FileName)
+	d.Line = tools.SanitizeUTF8(d.Line)
+	d.NearText = tools.SanitizeUTF8(d.NearText)
 }

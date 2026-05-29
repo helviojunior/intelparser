@@ -78,6 +78,8 @@ func Connection(uri string, shouldExist, debug bool) (*gorm.DB, error) {
 		&models.File{},
 		&models.URL{},
 		&models.Email{},
+		&models.Phone{},
+		&models.Document{},
 		&models.Credential{},
 		&Application{},
 	); err != nil {

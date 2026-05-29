@@ -395,8 +395,65 @@ func NewElasticWriter(uri string, debug bool) (*ElasticWriter, error) {
 	    return nil, err
 	}
 
+
+	//Phone Index
+	err = wr.CreateIndex(wr.Index + "_phone", `{
+		    "settings": {
+                    "number_of_replicas": 1,
+                    "index": {"highlight.max_analyzed_offset": 10000000}
+                },
+
+            "mappings": {
+                "properties": {
+                    "time": {"type": "date"},
+                    "fingerprint": {"type": "keyword"},
+                    "country": {"type": "keyword"},
+                    "raw": {"type": "text"},
+                    "phone": {"type": "keyword"},
+                    "source": {"type": "keyword"},
+                    "file_name": {"type": "keyword"},
+                    "line": {"type": "text"},
+                    "near_text": {"type": "text"},
+                    "bucket": {"type": "text"},
+                    "file_id": {"type": "keyword"}
+                }
+            }
+		}`)
+	if err != nil {
+	    return nil, err
+	}
+
+
+	//Document Index (CPF / CNPJ)
+	err = wr.CreateIndex(wr.Index + "_document", `{
+		    "settings": {
+                    "number_of_replicas": 1,
+                    "index": {"highlight.max_analyzed_offset": 10000000}
+                },
+
+            "mappings": {
+                "properties": {
+                    "time": {"type": "date"},
+                    "fingerprint": {"type": "keyword"},
+                    "raw": {"type": "text"},
+                    "number": {"type": "keyword"},
+                    "is_cpf": {"type": "boolean"},
+                    "is_cnpj": {"type": "boolean"},
+                    "source": {"type": "keyword"},
+                    "file_name": {"type": "keyword"},
+                    "line": {"type": "text"},
+                    "near_text": {"type": "text"},
+                    "bucket": {"type": "text"},
+                    "file_id": {"type": "keyword"}
+                }
+            }
+		}`)
+	if err != nil {
+	    return nil, err
+	}
+
 	// Apply ingest-friendly settings to all managed indices (new and existing).
-	for _, idx := range []string{wr.Index, wr.Index + "_creds", wr.Index + "_urls", wr.Index + "_emails"} {
+	for _, idx := range []string{wr.Index, wr.Index + "_creds", wr.Index + "_urls", wr.Index + "_emails", wr.Index + "_phone", wr.Index + "_document"} {
 		if err := wr.applyIngestSettings(idx); err != nil {
 			logger.Warnf("Could not apply ingest settings to %s: %s", idx, err)
 		}
@@ -834,13 +891,13 @@ func ingestItems[T hashable](ew *ElasticWriter, index string, items []T,
 // big files don't serialize them behind each other; the single-doc file
 // write is done after all three complete.
 func (ew *ElasticWriter) writeSync(result *models.File) error {
-	ew.logf("Integrating elastic (file=%s): %d credentials, %d e-mails, %d urls",
-		result.FileName, len(result.Credentials), len(result.Emails), len(result.URLs))
+	ew.logf("Integrating elastic (file=%s): %d credentials, %d e-mails, %d urls, %d phones, %d documents",
+		result.FileName, len(result.Credentials), len(result.Emails), len(result.URLs), len(result.Phones), len(result.Documents))
 
 	var wg sync.WaitGroup
-	errs := make([]error, 3)
+	errs := make([]error, 5)
 
-	wg.Add(3)
+	wg.Add(5)
 	go func() {
 		defer wg.Done()
 		errs[0] = ingestItems(ew, ew.Index+"_creds",
@@ -856,6 +913,16 @@ func (ew *ElasticWriter) writeSync(result *models.File) error {
 		errs[2] = ingestItems(ew, ew.Index+"_emails",
 			result.Emails, result.Fingerprint, result.Bucket)
 	}()
+	go func() {
+		defer wg.Done()
+		errs[3] = ingestItems(ew, ew.Index+"_phone",
+			result.Phones, result.Fingerprint, result.Bucket)
+	}()
+	go func() {
+		defer wg.Done()
+		errs[4] = ingestItems(ew, ew.Index+"_document",
+			result.Documents, result.Fingerprint, result.Bucket)
+	}()
 	wg.Wait()
 
 	for _, e := range errs {
@@ -870,6 +937,8 @@ func (ew *ElasticWriter) writeSync(result *models.File) error {
 	fileDoc.Credentials = nil
 	fileDoc.Emails = nil
 	fileDoc.URLs = nil
+	fileDoc.Phones = nil
+	fileDoc.Documents = nil
 
 	b_data, err := json.Marshal(fileDoc)
 	if err != nil {

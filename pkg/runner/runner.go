@@ -90,6 +90,8 @@ type Status struct {
 	Error int
     Url int
     Email int
+    Phone int
+    Document int
     Credential int
 	Skipped int
 	Spin string
@@ -107,22 +109,24 @@ func (st *Status) Print() {
             space = strings.Repeat(" ", 4 - len(st.Spin))
         }
 
-    	fmt.Fprintf(os.Stderr, 
-            "%s\n %s read: %d, failed: %d, ignored: %d               \n %s cred: %d, url: %d, email: %d\r\033[A\033[A", 
+    	fmt.Fprintf(os.Stderr,
+            "%s\n %s read: %d, failed: %d, ignored: %d               \n %s cred: %d, url: %d, email: %d, phone: %d, doc: %d\r\033[A\033[A",
         	"                                                                        ",
-        	ascii.ColoredSpin(st.Spin), 
-            st.Parsed, 
-            st.Error, 
-            st.Skipped, 
+        	ascii.ColoredSpin(st.Spin),
+            st.Parsed,
+            st.Error,
+            st.Skipped,
             space,
-            st.Credential, 
-            st.Url, 
-            st.Email)
-    	
+            st.Credential,
+            st.Url,
+            st.Email,
+            st.Phone,
+            st.Document)
+
     }else{
-        st.log.Info("STATUS", 
-            "read", st.Parsed, "failed", st.Error, "ignored", st.Skipped, 
-            "creds", st.Credential, "url", st.Url, "email", st.Email)
+        st.log.Info("STATUS",
+            "read", st.Parsed, "failed", st.Error, "ignored", st.Skipped,
+            "creds", st.Credential, "url", st.Url, "email", st.Email, "phone", st.Phone, "doc", st.Document)
     }
 } 
 
@@ -174,6 +178,8 @@ func (id *Identifiers) LoadRules() error {
 	id.Rules = []*rules.Rule{
 		rules.Url(),
 		rules.Email(),
+		rules.Phone(),
+		rules.Document(),
         rules.Leak1(),
         rules.Leak2(),
         rules.Leak3(),
@@ -553,6 +559,24 @@ func (run *Runner) DetectFile(file *models.File) error {
                     file.URLs = append(file.URLs, finding.Url)
                 }
 
+                if finding.Phone.Phone != "" {
+                    run.status.Phone += 1
+                    finding.Phone.Time = file.Date
+                    finding.Phone.Source = file.Provider
+                    finding.Phone.FileName = file.FileName
+                    finding.Phone.Line = strings.Trim(finding.Line, "\r\n")
+                    file.Phones = append(file.Phones, finding.Phone)
+                }
+
+                if finding.Document.Number != "" {
+                    run.status.Document += 1
+                    finding.Document.Time = file.Date
+                    finding.Document.Source = file.Provider
+                    finding.Document.FileName = file.FileName
+                    finding.Document.Line = strings.Trim(finding.Line, "\r\n")
+                    file.Documents = append(file.Documents, finding.Document)
+                }
+
                 resultMutex.Unlock()
 
             }
@@ -925,12 +949,20 @@ func (run *Runner) detectRule(fragment Fragment, currentRaw string, r *rules.Rul
 
         if finding.Url.Url != "" {
             finding.Url.NearText = nearText
-            if ok, _ := ContainsUrlDomainStopWord(finding.Url.Domain); ok { 
+            if ok, _ := ContainsUrlDomainStopWord(finding.Url.Domain); ok {
                 finding.Url.Url = ""
             }
         }
 
-        if finding.Credential.Username == "" && finding.Email.Email == "" && finding.Url.Url == "" {
+        if finding.Phone.Phone != "" {
+            finding.Phone.NearText = nearText
+        }
+
+        if finding.Document.Number != "" {
+            finding.Document.NearText = nearText
+        }
+
+        if finding.Credential.Username == "" && finding.Email.Email == "" && finding.Url.Url == "" && finding.Phone.Phone == "" && finding.Document.Number == "" {
             continue
         }
 
