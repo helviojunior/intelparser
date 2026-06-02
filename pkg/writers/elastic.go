@@ -36,6 +36,14 @@ var elkRefreshInterval = "30s"
 var elkTranslogDurability = "async"
 var elkReplicas = -1 // -1 means "do not change"
 
+// elkCodec is the Lucene store codec applied at index-creation time. It is a
+// static setting (settable only on creation, never on an open index), so it
+// must live in the create body — unlike refresh/translog/replicas which are
+// patched live by applyIngestSettings. "best_compression" (DEFLATE) trades a
+// little CPU on merge for ~20-25% less disk than the default "default" (LZ4),
+// which matters a lot for these keyword/text-heavy leak indices.
+var elkCodec = "best_compression"
+
 // queueItem wraps a File with the timestamp it was enqueued at, so workers
 // can measure queue-wait time (producer-to-consumer latency).
 type queueItem struct {
@@ -289,15 +297,13 @@ func NewElasticWriter(uri string, debug bool) (*ElasticWriter, error) {
 		}
 	}
 
-	//File Index
-	err = wr.CreateIndex(wr.Index, `{
-		    "settings": {
-                    "number_of_replicas": 1,
-                    "index": {"highlight.max_analyzed_offset": 10000000}
-                },
+	if v1, ok := os.LookupEnv("ELK_CODEC"); ok && v1 != "" {
+		logger.Infof("Setting ELK index.codec to %s using env.ELK_CODEC", v1)
+		elkCodec = v1
+	}
 
-            "mappings": {
-                "properties": {
+	//File Index
+	err = wr.CreateIndex(wr.Index, buildIndexBody(`{
                     "indexed_at": {"type": "date"},
                     "leak_date": {"type": "date"},
                     "fingerprint": {"type": "keyword"},
@@ -311,22 +317,13 @@ func NewElasticWriter(uri string, debug bool) (*ElasticWriter, error) {
                     "bucket": {"type": "text"},
                     "media_type": {"type": "text"},
                     "content": {"type": "text"}
-                }
-            }
-		}`)
+                }`))
 	if err != nil {
 	    return nil, err
 	}
 
 	//Credential Index
-	err = wr.CreateIndex(wr.Index + "_creds", `{
-		    "settings": {
-                    "number_of_replicas": 1,
-                    "index": {"highlight.max_analyzed_offset": 10000000}
-                },
-
-            "mappings": {
-                "properties": {
+	err = wr.CreateIndex(wr.Index + "_creds", buildIndexBody(`{
                     "time": {"type": "date"},
                     "fingerprint": {"type": "keyword"},
                     "rule": {"type": "keyword"},
@@ -341,22 +338,13 @@ func NewElasticWriter(uri string, debug bool) (*ElasticWriter, error) {
                     "near_text": {"type": "text"},
                     "bucket": {"type": "text"},
                     "file_id": {"type": "keyword"}
-                }
-            }
-		}`)
+                }`))
 	if err != nil {
 	    return nil, err
 	}
 
 	//Urls Index
-	err = wr.CreateIndex(wr.Index + "_urls", `{
-		    "settings": {
-                    "number_of_replicas": 1,
-                    "index": {"highlight.max_analyzed_offset": 10000000}
-                },
-
-            "mappings": {
-                "properties": {
+	err = wr.CreateIndex(wr.Index + "_urls", buildIndexBody(`{
                     "time": {"type": "date"},
                     "fingerprint": {"type": "keyword"},
                     "domain": {"type": "keyword"},
@@ -364,23 +352,14 @@ func NewElasticWriter(uri string, debug bool) (*ElasticWriter, error) {
                     "near_text": {"type": "text"},
                     "bucket": {"type": "text"},
                     "file_id": {"type": "keyword"}
-                }
-            }
-		}`)
+                }`))
 	if err != nil {
 	    return nil, err
 	}
 
 
 	//Emails Index
-	err = wr.CreateIndex(wr.Index + "_emails", `{
-		    "settings": {
-                    "number_of_replicas": 1,
-                    "index": {"highlight.max_analyzed_offset": 10000000}
-                },
-
-            "mappings": {
-                "properties": {
+	err = wr.CreateIndex(wr.Index + "_emails", buildIndexBody(`{
                     "time": {"type": "date"},
                     "fingerprint": {"type": "keyword"},
                     "domain": {"type": "keyword"},
@@ -388,23 +367,14 @@ func NewElasticWriter(uri string, debug bool) (*ElasticWriter, error) {
                     "near_text": {"type": "text"},
                     "bucket": {"type": "text"},
                     "file_id": {"type": "keyword"}
-                }
-            }
-		}`)
+                }`))
 	if err != nil {
 	    return nil, err
 	}
 
 
 	//Phone Index
-	err = wr.CreateIndex(wr.Index + "_phone", `{
-		    "settings": {
-                    "number_of_replicas": 1,
-                    "index": {"highlight.max_analyzed_offset": 10000000}
-                },
-
-            "mappings": {
-                "properties": {
+	err = wr.CreateIndex(wr.Index + "_phone", buildIndexBody(`{
                     "time": {"type": "date"},
                     "fingerprint": {"type": "keyword"},
                     "country": {"type": "keyword"},
@@ -416,23 +386,14 @@ func NewElasticWriter(uri string, debug bool) (*ElasticWriter, error) {
                     "near_text": {"type": "text"},
                     "bucket": {"type": "text"},
                     "file_id": {"type": "keyword"}
-                }
-            }
-		}`)
+                }`))
 	if err != nil {
 	    return nil, err
 	}
 
 
 	//Document Index (CPF / CNPJ)
-	err = wr.CreateIndex(wr.Index + "_document", `{
-		    "settings": {
-                    "number_of_replicas": 1,
-                    "index": {"highlight.max_analyzed_offset": 10000000}
-                },
-
-            "mappings": {
-                "properties": {
+	err = wr.CreateIndex(wr.Index + "_document", buildIndexBody(`{
                     "time": {"type": "date"},
                     "fingerprint": {"type": "keyword"},
                     "raw": {"type": "text"},
@@ -445,9 +406,7 @@ func NewElasticWriter(uri string, debug bool) (*ElasticWriter, error) {
                     "near_text": {"type": "text"},
                     "bucket": {"type": "text"},
                     "file_id": {"type": "keyword"}
-                }
-            }
-		}`)
+                }`))
 	if err != nil {
 	    return nil, err
 	}
@@ -473,6 +432,29 @@ func NewElasticWriter(uri string, debug bool) (*ElasticWriter, error) {
 	go wr.metricsReporter()
 
 	return wr, nil
+}
+
+// buildIndexBody wraps a mappings "properties" object (passed as a raw JSON
+// string, braces included) with the standard creation-time settings shared by
+// every managed index. The store codec is injected here on purpose: index.codec
+// is a static setting that can only be set at creation time, never patched on an
+// open index — so unlike refresh_interval / translog.durability / replicas
+// (handled live by applyIngestSettings) it MUST live in the create body. New
+// indices are therefore born with best_compression (or whatever ELK_CODEC sets),
+// avoiding a later reindex/force_merge just to reclaim disk.
+func buildIndexBody(properties string) string {
+	return fmt.Sprintf(`{
+            "settings": {
+                "number_of_replicas": 1,
+                "index": {
+                    "highlight.max_analyzed_offset": 10000000,
+                    "codec": %q
+                }
+            },
+            "mappings": {
+                "properties": %s
+            }
+        }`, elkCodec, properties)
 }
 
 // applyIngestSettings tunes an index for bulk ingestion throughput.
