@@ -26,8 +26,10 @@ import (
 	logger "github.com/helviojunior/intelparser/pkg/log"
 )
 
-// fields in the main model to ignore
-var elkExludedFields = []string{"failed", "failed_reason", "near_text"}
+// fields in the main model to ignore. "fingerprint" is stripped from the file
+// document because it is used as the document _id — storing it again as a field
+// would be redundant (same for the leak indices, whose _id is the content hash).
+var elkExludedFields = []string{"failed", "failed_reason", "near_text", "fingerprint"}
 var elkBulkCount = 200
 var elkBulkMaxSize = 5 * 1024 * 1024
 var elkWorkers = 4
@@ -66,6 +68,11 @@ type ElasticWriter struct {
 	closed   atomic.Bool
 	failures atomic.Int64
 
+	// refIndexes memoises which monthly reference indices (intelparser_ref_YYYY-MM)
+	// have already been created this run, so writeSync doesn't issue an Exists/Create
+	// round-trip for every file. Keyed by index name -> struct{}{}.
+	refIndexes sync.Map
+
 	// Metrics (monotonically increasing, read atomically).
 	metBulks       atomic.Int64
 	metBulkRetries atomic.Int64
@@ -82,22 +89,28 @@ type ElasticWriter struct {
 	reporterWG   sync.WaitGroup
 }
 
+// bulkItemResult mirrors the per-document result Elasticsearch returns inside a
+// bulk response. The response keys each item by the action used ("index" or
+// "update"), so both are decoded and the non-empty one is inspected.
+type bulkItemResult struct {
+	ID     string `json:"_id"`
+	Result string `json:"result"`
+	Status int    `json:"status"`
+	Error  struct {
+		Type   string `json:"type"`
+		Reason string `json:"reason"`
+		Cause  struct {
+			Type   string `json:"type"`
+			Reason string `json:"reason"`
+		} `json:"caused_by"`
+	} `json:"error"`
+}
+
 type bulkResponse struct {
 	Errors bool `json:"errors"`
 	Items  []struct {
-		Index struct {
-			ID     string `json:"_id"`
-			Result string `json:"result"`
-			Status int    `json:"status"`
-			Error  struct {
-				Type   string `json:"type"`
-				Reason string `json:"reason"`
-				Cause  struct {
-					Type   string `json:"type"`
-					Reason string `json:"reason"`
-				} `json:"caused_by"`
-			} `json:"error"`
-		} `json:"index"`
+		Index  bulkItemResult `json:"index"`
+		Update bulkItemResult `json:"update"`
 	} `json:"items"`
 }
 
@@ -302,11 +315,11 @@ func NewElasticWriter(uri string, debug bool) (*ElasticWriter, error) {
 		elkCodec = v1
 	}
 
-	//File Index
+	// File index (global, single): file metadata only. The document _id is the
+	// file fingerprint, so the fingerprint is no longer stored as a field.
 	err = wr.CreateIndex(wr.Index, buildIndexBody(`{
                     "indexed_at": {"type": "date"},
                     "leak_date": {"type": "date"},
-                    "fingerprint": {"type": "keyword"},
                     "name": {"type": "keyword"},
                     "file_name": {"type": "text"},
                     "file_path": {"type": "keyword"},
@@ -322,10 +335,16 @@ func NewElasticWriter(uri string, debug bool) (*ElasticWriter, error) {
 	    return nil, err
 	}
 
+	// Leak indices (global, single, deduplicated): each holds ONLY the intrinsic
+	// leak value plus two dates — inserted_at (first time it was ever seen) and
+	// last_reference_at (most recent import that referenced it). No file
+	// reference, no occurrence context, no fingerprint field: the _id is the
+	// content hash (models.LeakIndexable.LeakID), which globally dedups the leak.
+
 	//Credential Index
 	err = wr.CreateIndex(wr.Index + "_creds", buildIndexBody(`{
-                    "time": {"type": "date"},
-                    "fingerprint": {"type": "keyword"},
+                    "inserted_at": {"type": "date"},
+                    "last_reference_at": {"type": "date"},
                     "rule": {"type": "keyword"},
                     "user_domain": {"type": "keyword"},
                     "username": {"type": "keyword"},
@@ -334,10 +353,7 @@ func NewElasticWriter(uri string, debug bool) (*ElasticWriter, error) {
                     "url": {"type": "keyword"},
                     "url_domain": {"type": "keyword"},
                     "severity": {"type": "long"},
-                    "entropy": {"type": "long"},
-                    "near_text": {"type": "text"},
-                    "bucket": {"type": "text"},
-                    "file_id": {"type": "keyword"}
+                    "entropy": {"type": "float"}
                 }`))
 	if err != nil {
 	    return nil, err
@@ -345,13 +361,10 @@ func NewElasticWriter(uri string, debug bool) (*ElasticWriter, error) {
 
 	//Urls Index
 	err = wr.CreateIndex(wr.Index + "_urls", buildIndexBody(`{
-                    "time": {"type": "date"},
-                    "fingerprint": {"type": "keyword"},
+                    "inserted_at": {"type": "date"},
+                    "last_reference_at": {"type": "date"},
                     "domain": {"type": "keyword"},
-                    "url": {"type": "keyword"},
-                    "near_text": {"type": "text"},
-                    "bucket": {"type": "text"},
-                    "file_id": {"type": "keyword"}
+                    "url": {"type": "keyword"}
                 }`))
 	if err != nil {
 	    return nil, err
@@ -360,13 +373,10 @@ func NewElasticWriter(uri string, debug bool) (*ElasticWriter, error) {
 
 	//Emails Index
 	err = wr.CreateIndex(wr.Index + "_emails", buildIndexBody(`{
-                    "time": {"type": "date"},
-                    "fingerprint": {"type": "keyword"},
+                    "inserted_at": {"type": "date"},
+                    "last_reference_at": {"type": "date"},
                     "domain": {"type": "keyword"},
-                    "email": {"type": "keyword"},
-                    "near_text": {"type": "text"},
-                    "bucket": {"type": "text"},
-                    "file_id": {"type": "keyword"}
+                    "email": {"type": "keyword"}
                 }`))
 	if err != nil {
 	    return nil, err
@@ -375,17 +385,11 @@ func NewElasticWriter(uri string, debug bool) (*ElasticWriter, error) {
 
 	//Phone Index
 	err = wr.CreateIndex(wr.Index + "_phone", buildIndexBody(`{
-                    "time": {"type": "date"},
-                    "fingerprint": {"type": "keyword"},
+                    "inserted_at": {"type": "date"},
+                    "last_reference_at": {"type": "date"},
                     "country": {"type": "keyword"},
                     "raw": {"type": "text"},
-                    "phone": {"type": "keyword"},
-                    "source": {"type": "keyword"},
-                    "file_name": {"type": "keyword"},
-                    "line": {"type": "text"},
-                    "near_text": {"type": "text"},
-                    "bucket": {"type": "text"},
-                    "file_id": {"type": "keyword"}
+                    "phone": {"type": "keyword"}
                 }`))
 	if err != nil {
 	    return nil, err
@@ -394,24 +398,20 @@ func NewElasticWriter(uri string, debug bool) (*ElasticWriter, error) {
 
 	//Document Index (CPF / CNPJ)
 	err = wr.CreateIndex(wr.Index + "_document", buildIndexBody(`{
-                    "time": {"type": "date"},
-                    "fingerprint": {"type": "keyword"},
+                    "inserted_at": {"type": "date"},
+                    "last_reference_at": {"type": "date"},
                     "raw": {"type": "text"},
                     "number": {"type": "keyword"},
                     "is_cpf": {"type": "boolean"},
-                    "is_cnpj": {"type": "boolean"},
-                    "source": {"type": "keyword"},
-                    "file_name": {"type": "keyword"},
-                    "line": {"type": "text"},
-                    "near_text": {"type": "text"},
-                    "bucket": {"type": "text"},
-                    "file_id": {"type": "keyword"}
+                    "is_cnpj": {"type": "boolean"}
                 }`))
 	if err != nil {
 	    return nil, err
 	}
 
-	// Apply ingest-friendly settings to all managed indices (new and existing).
+	// Apply ingest-friendly settings to all managed static indices (new and
+	// existing). Monthly reference indices are created lazily per import month
+	// (see ensureRefIndex), which applies the same settings on creation.
 	for _, idx := range []string{wr.Index, wr.Index + "_creds", wr.Index + "_urls", wr.Index + "_emails", wr.Index + "_phone", wr.Index + "_document"} {
 		if err := wr.applyIngestSettings(idx); err != nil {
 			logger.Warnf("Could not apply ingest settings to %s: %s", idx, err)
@@ -494,6 +494,47 @@ func (ew *ElasticWriter) applyIngestSettings(index string) error {
 	return nil
 }
 
+// refIndexName returns the monthly reference index name for a given import
+// timestamp, e.g. "intelparser_ref_2026-07". Partitioning is by import
+// (indexed_at) month so whole import batches can be rotated/dropped as a unit.
+func (ew *ElasticWriter) refIndexName(indexedAt time.Time) string {
+	return fmt.Sprintf("%s_ref_%s", ew.Index, indexedAt.UTC().Format("2006-01"))
+}
+
+// ensureRefIndex lazily creates the monthly file<->leak reference index the
+// first time it is needed in this run, then memoises it so subsequent files in
+// the same month skip the Exists/Create/settings round-trips. The reference
+// document carries the pointer (file_id, leak_id, type) plus the
+// occurrence-specific context (bucket, near_text, line, source, file_name)
+// that does not belong on the deduplicated leak itself.
+func (ew *ElasticWriter) ensureRefIndex(index string) error {
+	if _, ok := ew.refIndexes.Load(index); ok {
+		return nil
+	}
+
+	err := ew.CreateIndex(index, buildIndexBody(`{
+                    "indexed_at": {"type": "date"},
+                    "file_id": {"type": "keyword"},
+                    "leak_id": {"type": "keyword"},
+                    "type": {"type": "keyword"},
+                    "bucket": {"type": "text"},
+                    "near_text": {"type": "text"},
+                    "source": {"type": "keyword"},
+                    "file_name": {"type": "keyword"},
+                    "line": {"type": "text"}
+                }`))
+	if err != nil {
+		return err
+	}
+
+	if err := ew.applyIngestSettings(index); err != nil {
+		logger.Warnf("Could not apply ingest settings to %s: %s", index, err)
+	}
+
+	ew.refIndexes.Store(index, struct{}{})
+	return nil
+}
+
 // logf emits an operational log message at Info when the writer was created
 // with debug=true, or at Debug otherwise. Use for per-bulk / per-file /
 // periodic metrics logs that would otherwise be too noisy in Info.
@@ -567,7 +608,7 @@ func (ew *ElasticWriter) Flush() error {
 	return nil
 }
 
-// recordBulk atomically updates bulk-level metrics. Called by CreateDocBulk on
+// recordBulk atomically updates bulk-level metrics. Called by sendBulk on
 // successful completion. dur is the duration of the successful HTTP request.
 func (ew *ElasticWriter) recordBulk(docs int, size int, dur time.Duration) {
 	ew.metBulks.Add(1)
@@ -816,56 +857,108 @@ func renderKVTable(title string, rows [][2]string) string {
 	return b.String()
 }
 
-// hashable is satisfied by Credential, URL and Email (see models.go). Used
-// by ingestItems to compute each doc's deterministic _id.
-type hashable interface {
-	CalcHash(string) string
+// refID is the deterministic _id of a reference document: it ties one file to
+// one leak, so the same (file, leak) pair is idempotent across re-imports.
+func refID(fileID, leakID string) string {
+	var hash string
+	models.CalcRefHash(&hash, fileID, leakID)
+	return hash
 }
 
-// ingestItems marshals each item, attaches the standard envelope fields, and
-// ships the resulting docs to `index` in bulks respecting elkBulkCount and
-// elkBulkMaxSize. Kept generic so the per-index loops in writeSync stay
-// identical and can run concurrently.
-func ingestItems[T hashable](ew *ElasticWriter, index string, items []T,
-	fingerprint, bucket string) error {
+// ingestLeaks handles one leak type for one file. For every leak it emits:
+//
+//   - a leak-index upsert (bulk "update" action) keyed by the content hash:
+//     on first sight it inserts the intrinsic value with inserted_at =
+//     last_reference_at = the import time; on a repeat it only bumps
+//     last_reference_at, preserving the original inserted_at. retry_on_conflict
+//     (set in sendBulk) absorbs the version conflicts that concurrent workers
+//     upserting the same shared leak would otherwise raise.
+//   - a reference-index document (bulk "index" action) keyed by refID, holding
+//     the file<->leak pointer plus the occurrence context.
+//
+// Leak and reference docs are flushed independently as they hit elkBulkCount /
+// elkBulkMaxSize.
+func ingestLeaks[T models.LeakIndexable](ew *ElasticWriter, leakIndex, refIndex,
+	fileID, bucket string, indexedAt time.Time, items []T) error {
 
-	docs := make(map[string][]byte)
-	docsLen := 0
+	nowStr := indexedAt.UTC().Format(time.RFC3339)
 
-	for _, it := range items {
-		b, err := json.Marshal(it)
-		if err != nil {
+	leakDocs := make(map[string][]byte)
+	leakLen := 0
+	refDocs := make(map[string][]byte)
+	refLen := 0
+
+	flushLeaks := func() error {
+		if len(leakDocs) == 0 {
+			return nil
+		}
+		if err := ew.sendBulk(leakIndex, "update", leakDocs); err != nil {
 			return err
 		}
+		leakDocs = make(map[string][]byte)
+		leakLen = 0
+		return nil
+	}
+	flushRefs := func() error {
+		if len(refDocs) == 0 {
+			return nil
+		}
+		if err := ew.sendBulk(refIndex, "index", refDocs); err != nil {
+			return err
+		}
+		refDocs = make(map[string][]byte)
+		refLen = 0
+		return nil
+	}
 
-		cid := it.CalcHash(fingerprint)
-		b, err = ew.MarshalAppend(b, map[string]interface{}{
-			"file_id":     fingerprint,
-			"bucket":      bucket,
-			"fingerprint": cid,
+	for _, it := range items {
+		leakID := it.LeakID()
+
+		// Leak upsert: doc bumps only last_reference_at; upsert seeds the
+		// intrinsic value plus both dates on the very first insertion.
+		upsertDoc := it.LeakDoc()
+		upsertDoc["inserted_at"] = nowStr
+		upsertDoc["last_reference_at"] = nowStr
+		lb, err := json.Marshal(map[string]interface{}{
+			"doc":    map[string]interface{}{"last_reference_at": nowStr},
+			"upsert": upsertDoc,
 		})
 		if err != nil {
 			return err
 		}
+		leakDocs[leakID] = lb
+		leakLen += len(lb)
 
-		docs[cid] = b
-		docsLen += len(b)
-
-		if len(docs) >= elkBulkCount || docsLen >= elkBulkMaxSize {
-			if err := ew.CreateDocBulk(index, docs); err != nil {
-				return err
-			}
-			docs = make(map[string][]byte)
-			docsLen = 0
-		}
-	}
-
-	if len(docs) > 0 {
-		if err := ew.CreateDocBulk(index, docs); err != nil {
+		// Reference doc: pointer + occurrence context.
+		ref := it.RefDoc()
+		ref["indexed_at"] = nowStr
+		ref["file_id"] = fileID
+		ref["leak_id"] = leakID
+		ref["type"] = it.LeakType()
+		ref["bucket"] = bucket
+		rb, err := json.Marshal(ref)
+		if err != nil {
 			return err
 		}
+		refDocs[refID(fileID, leakID)] = rb
+		refLen += len(rb)
+
+		if len(leakDocs) >= elkBulkCount || leakLen >= elkBulkMaxSize {
+			if err := flushLeaks(); err != nil {
+				return err
+			}
+		}
+		if len(refDocs) >= elkBulkCount || refLen >= elkBulkMaxSize {
+			if err := flushRefs(); err != nil {
+				return err
+			}
+		}
 	}
-	return nil
+
+	if err := flushLeaks(); err != nil {
+		return err
+	}
+	return flushRefs()
 }
 
 // writeSync performs the actual bulk HTTP calls against OpenSearch.
@@ -876,34 +969,51 @@ func (ew *ElasticWriter) writeSync(result *models.File) error {
 	ew.logf("Integrating elastic (file=%s): %d credentials, %d e-mails, %d urls, %d phones, %d documents",
 		result.FileName, len(result.Credentials), len(result.Emails), len(result.URLs), len(result.Phones), len(result.Documents))
 
+	// Partition the reference index by import (indexed_at) month. Fall back to
+	// the leak date, then to now, so a File that reaches the writer without an
+	// indexed_at (e.g. some conversion paths) still lands in a sane partition.
+	indexedAt := result.IndexedAt
+	if indexedAt.IsZero() {
+		indexedAt = result.Date
+	}
+	if indexedAt.IsZero() {
+		indexedAt = time.Now()
+	}
+	refIndex := ew.refIndexName(indexedAt)
+	if err := ew.ensureRefIndex(refIndex); err != nil {
+		return err
+	}
+
+	fileID := result.Fingerprint
+
 	var wg sync.WaitGroup
 	errs := make([]error, 5)
 
 	wg.Add(5)
 	go func() {
 		defer wg.Done()
-		errs[0] = ingestItems(ew, ew.Index+"_creds",
-			result.Credentials, result.Fingerprint, result.Bucket)
+		errs[0] = ingestLeaks(ew, ew.Index+"_creds", refIndex,
+			fileID, result.Bucket, indexedAt, result.Credentials)
 	}()
 	go func() {
 		defer wg.Done()
-		errs[1] = ingestItems(ew, ew.Index+"_urls",
-			result.URLs, result.Fingerprint, result.Bucket)
+		errs[1] = ingestLeaks(ew, ew.Index+"_urls", refIndex,
+			fileID, result.Bucket, indexedAt, result.URLs)
 	}()
 	go func() {
 		defer wg.Done()
-		errs[2] = ingestItems(ew, ew.Index+"_emails",
-			result.Emails, result.Fingerprint, result.Bucket)
+		errs[2] = ingestLeaks(ew, ew.Index+"_emails", refIndex,
+			fileID, result.Bucket, indexedAt, result.Emails)
 	}()
 	go func() {
 		defer wg.Done()
-		errs[3] = ingestItems(ew, ew.Index+"_phone",
-			result.Phones, result.Fingerprint, result.Bucket)
+		errs[3] = ingestLeaks(ew, ew.Index+"_phone", refIndex,
+			fileID, result.Bucket, indexedAt, result.Phones)
 	}()
 	go func() {
 		defer wg.Done()
-		errs[4] = ingestItems(ew, ew.Index+"_document",
-			result.Documents, result.Fingerprint, result.Bucket)
+		errs[4] = ingestLeaks(ew, ew.Index+"_document", refIndex,
+			fileID, result.Bucket, indexedAt, result.Documents)
 	}()
 	wg.Wait()
 
@@ -914,7 +1024,9 @@ func (ew *ElasticWriter) writeSync(result *models.File) error {
 	}
 
 	// File doc — build a local copy without the heavy slices so the caller's
-	// File (and any other writers sharing the pointer) are not mutated.
+	// File (and any other writers sharing the pointer) are not mutated. Routed
+	// through ew.Marshal so the fingerprint field (now the document _id) and the
+	// other excluded fields are stripped from the stored document.
 	fileDoc := *result
 	fileDoc.Credentials = nil
 	fileDoc.Emails = nil
@@ -922,13 +1034,13 @@ func (ew *ElasticWriter) writeSync(result *models.File) error {
 	fileDoc.Phones = nil
 	fileDoc.Documents = nil
 
-	b_data, err := json.Marshal(fileDoc)
+	b_data, err := ew.Marshal(fileDoc)
 	if err != nil {
 		return err
 	}
 
 	res, err := ew.Client.Index(ew.Index, bytes.NewReader(b_data),
-		ew.Client.Index.WithDocumentID(result.Fingerprint))
+		ew.Client.Index.WithDocumentID(fileID))
 	if err != nil {
 		return err
 	}
@@ -1000,12 +1112,25 @@ func (ew *ElasticWriter) CreateIndex(index string, mapping string) error {
 
 }
 
-func (ew *ElasticWriter) CreateDocBulk(index string, docs map[string][]byte) error {
+// sendBulk ships a batch of documents to `index` using the given bulk action.
+//
+//   - "index"  : each doc value is a full source document; the meta line is
+//                { "index": { "_id": <id> } } and an existing doc is replaced.
+//   - "update" : each doc value is an update body ({"doc":...,"upsert":...});
+//                the meta line is { "update": { "_id": <id>, "retry_on_conflict": 5 } }
+//                so concurrent upserts of the same shared leak retry instead of
+//                failing with a version conflict.
+func (ew *ElasticWriter) sendBulk(index string, action string, docs map[string][]byte) error {
     var raw map[string]interface{}
     var buf bytes.Buffer
     size := 0
     for id, doc := range docs {
-    	meta := []byte(fmt.Sprintf(`{ "index" : { "_id" : "%s" } }%s`, id, "\n"))
+    	var meta []byte
+    	if action == "update" {
+    		meta = []byte(fmt.Sprintf(`{ "update" : { "_id" : %q, "retry_on_conflict" : 5 } }%s`, id, "\n"))
+    	} else {
+    		meta = []byte(fmt.Sprintf(`{ "index" : { "_id" : %q } }%s`, id, "\n"))
+    	}
     	data := []byte(doc)
     	data = append(data, "\n"...)
 
@@ -1016,7 +1141,7 @@ func (ew *ElasticWriter) CreateDocBulk(index string, docs map[string][]byte) err
 
     }
 
-    ew.logf("Elastic bulk start: %d docs, %s -> %s", len(docs), tools.Bytes(uint64(size)), index)
+    ew.logf("Elastic bulk start: %d docs (%s), %s -> %s", len(docs), action, tools.Bytes(uint64(size)), index)
 
     start := time.Now()
     for i := range 10 {
@@ -1059,11 +1184,17 @@ func (ew *ElasticWriter) CreateDocBulk(index string, docs map[string][]byte) err
                 itemErrs := 0
                 var firstErr string
                 for _, d := range blk.Items {
-                    if d.Index.Status > 201 {
+                    // The item is keyed by the action used; pick whichever the
+                    // server populated (Status != 0).
+                    r := d.Index
+                    if r.Status == 0 {
+                        r = d.Update
+                    }
+                    if r.Status > 201 {
                         itemErrs++
                         if firstErr == "" {
                             firstErr = fmt.Sprintf("[%d] %s: %s",
-                                d.Index.Status, d.Index.Error.Type, d.Index.Error.Reason)
+                                r.Status, r.Error.Type, r.Error.Reason)
                         }
                     }
                 }

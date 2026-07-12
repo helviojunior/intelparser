@@ -159,7 +159,20 @@ func getFilteredOnly(file models.File) *models.File {
         }
     }
 
-    if !containsFilterWord(nf.Content) && len(nf.Credentials) == 0 && len(nf.Emails) == 0 && len(nf.URLs) == 0 {
+    for _, p := range file.Phones {
+        if containsFilterWord(p.Phone) || containsFilterWord(p.Raw) || containsFilterWord(p.NearText) {
+            nf.Phones = append(nf.Phones, p)
+        }
+    }
+
+    for _, dc := range file.Documents {
+        if containsFilterWord(dc.Number) || containsFilterWord(dc.Raw) || containsFilterWord(dc.NearText) {
+            nf.Documents = append(nf.Documents, dc)
+        }
+    }
+
+    if !containsFilterWord(nf.Content) && len(nf.Credentials) == 0 && len(nf.Emails) == 0 &&
+        len(nf.URLs) == 0 && len(nf.Phones) == 0 && len(nf.Documents) == 0 {
         return nil
     }
 

@@ -342,34 +342,153 @@ func (d Document) MarshalJSON() ([]byte, error) {
 	})
 }
 
-func (cred Credential) CalcHash(additional_data string) string {
+// LeakIndexable is implemented by every leak type (Credential, URL, Email,
+// Phone, Document). It powers the restructured Elasticsearch writer, which
+// splits each leak into three concerns:
+//
+//   - LeakID:   a content-only fingerprint used as the _id in the global,
+//               deduplicated leak index. It must NOT depend on the file it
+//               was found in nor on a timestamp, so the same leak seen in
+//               different files/imports collapses to a single document.
+//   - LeakDoc:  the intrinsic leak fields (the value itself). This is all
+//               that gets stored in the leak index — no file reference.
+//   - RefDoc:   the occurrence-specific context (near_text, line, source...)
+//               that belongs to the monthly file<->leak reference index, not
+//               to the leak itself.
+//   - LeakType: a discriminator string for the reference index.
+type LeakIndexable interface {
+	LeakID() string
+	LeakType() string
+	LeakDoc() map[string]interface{}
+	RefDoc() map[string]interface{}
+}
+
+func (cred Credential) LeakType() string { return "credential" }
+
+func (cred Credential) LeakID() string {
 	var hash string
-	_calcHash(&hash, additional_data, cred.Time, cred.Rule, cred.UserDomain, cred.Username, cred.Password, cred.Url)
+	_calcHash(&hash, cred.Rule, cred.UserDomain, cred.Username, cred.Password, cred.Url)
 	return hash
 }
 
-func (u URL) CalcHash(additional_data string) string {
+func (cred Credential) LeakDoc() map[string]interface{} {
+	return map[string]interface{}{
+		"rule":        cred.Rule,
+		"user_domain": strings.ToLower(cred.UserDomain),
+		"username":    cred.Username,
+		"password":    cred.Password,
+		"cpf":         cred.CPF,
+		"url":         cred.Url,
+		"url_domain":  strings.ToLower(cred.UrlDomain),
+		"severity":    cred.Severity,
+		"entropy":     cred.Entropy,
+	}
+}
+
+func (cred Credential) RefDoc() map[string]interface{} {
+	return map[string]interface{}{
+		"near_text": cred.NearText,
+	}
+}
+
+func (u URL) LeakType() string { return "url" }
+
+func (u URL) LeakID() string {
 	var hash string
-	_calcHash(&hash, additional_data, u.Time, u.Url)
+	_calcHash(&hash, u.Url)
 	return hash
 }
 
-func (eml Email) CalcHash(additional_data string) string {
+func (u URL) LeakDoc() map[string]interface{} {
+	return map[string]interface{}{
+		"domain": strings.ToLower(u.Domain),
+		"url":    u.Url,
+	}
+}
+
+func (u URL) RefDoc() map[string]interface{} {
+	return map[string]interface{}{
+		"near_text": u.NearText,
+	}
+}
+
+func (eml Email) LeakType() string { return "email" }
+
+func (eml Email) LeakID() string {
 	var hash string
-	_calcHash(&hash, additional_data, eml.Time, eml.Email)
+	_calcHash(&hash, strings.ToLower(eml.Email))
 	return hash
 }
 
-func (p Phone) CalcHash(additional_data string) string {
+func (eml Email) LeakDoc() map[string]interface{} {
+	return map[string]interface{}{
+		"domain": strings.ToLower(eml.Domain),
+		"email":  strings.ToLower(eml.Email),
+	}
+}
+
+func (eml Email) RefDoc() map[string]interface{} {
+	return map[string]interface{}{
+		"near_text": eml.NearText,
+	}
+}
+
+func (p Phone) LeakType() string { return "phone" }
+
+func (p Phone) LeakID() string {
 	var hash string
-	_calcHash(&hash, additional_data, p.Time, p.Phone)
+	_calcHash(&hash, p.Phone)
 	return hash
 }
 
-func (d Document) CalcHash(additional_data string) string {
+func (p Phone) LeakDoc() map[string]interface{} {
+	return map[string]interface{}{
+		"country": p.Country,
+		"raw":     p.Raw,
+		"phone":   p.Phone,
+	}
+}
+
+func (p Phone) RefDoc() map[string]interface{} {
+	return map[string]interface{}{
+		"source":    p.Source,
+		"file_name": p.FileName,
+		"line":      p.Line,
+		"near_text": p.NearText,
+	}
+}
+
+func (d Document) LeakType() string { return "document" }
+
+func (d Document) LeakID() string {
 	var hash string
-	_calcHash(&hash, additional_data, d.Time, d.Number)
+	_calcHash(&hash, d.Number)
 	return hash
+}
+
+func (d Document) LeakDoc() map[string]interface{} {
+	return map[string]interface{}{
+		"raw":     d.Raw,
+		"number":  d.Number,
+		"is_cpf":  d.IsCPF,
+		"is_cnpj": d.IsCNPJ,
+	}
+}
+
+func (d Document) RefDoc() map[string]interface{} {
+	return map[string]interface{}{
+		"source":    d.Source,
+		"file_name": d.FileName,
+		"line":      d.Line,
+		"near_text": d.NearText,
+	}
+}
+
+// CalcRefHash exposes the shared SHA1 hashing used for deterministic document
+// ids to other packages (the Elasticsearch writer uses it to key the
+// file<->leak reference documents by file_id + leak_id).
+func CalcRefHash(outValue *string, keyvals ...interface{}) {
+	_calcHash(outValue, keyvals...)
 }
 
 func _calcHash(outValue *string, keyvals ...interface{}) {
