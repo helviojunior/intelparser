@@ -367,7 +367,10 @@ func (cred Credential) LeakType() string { return "credential" }
 
 func (cred Credential) LeakID() string {
 	var hash string
-	_calcHash(&hash, cred.Rule, cred.UserDomain, cred.Username, cred.Password, cred.Url)
+	// user_domain is lowercased to match LeakDoc (and how it is stored), so the
+	// same credential always hashes to the same _id regardless of the original
+	// casing of the domain.
+	_calcHash(&hash, cred.Rule, strings.ToLower(cred.UserDomain), cred.Username, cred.Password, cred.Url)
 	return hash
 }
 

@@ -72,6 +72,10 @@ type ElasticWriter struct {
 	// have already been created this run, so writeSync doesn't issue an Exists/Create
 	// round-trip for every file. Keyed by index name -> struct{}{}.
 	refIndexes sync.Map
+	// refMu serializes the create-if-absent section of ensureRefIndex so two
+	// concurrent workers hitting the first file of a new month don't both race
+	// to create the same index (which would 400 with resource_already_exists).
+	refMu sync.Mutex
 
 	// Metrics (monotonically increasing, read atomically).
 	metBulks       atomic.Int64
@@ -508,6 +512,15 @@ func (ew *ElasticWriter) refIndexName(indexedAt time.Time) string {
 // occurrence-specific context (bucket, near_text, line, source, file_name)
 // that does not belong on the deduplicated leak itself.
 func (ew *ElasticWriter) ensureRefIndex(index string) error {
+	if _, ok := ew.refIndexes.Load(index); ok {
+		return nil
+	}
+
+	// Serialize creation and re-check under the lock: only the first worker to
+	// arrive for a given month actually creates the index; the rest see it in
+	// the map and fall through.
+	ew.refMu.Lock()
+	defer ew.refMu.Unlock()
 	if _, ok := ew.refIndexes.Load(index); ok {
 		return nil
 	}
@@ -1082,6 +1095,12 @@ func (ew *ElasticWriter) CreateIndex(index string, mapping string) error {
 		        if err := json.NewDecoder(res.Body).Decode(&raw); err != nil {
 		            return errors.New(fmt.Sprintf("Failure to to parse response body: %s", err))
 		        } else {
+		            errType, _ := raw["error"].(map[string]interface{})["type"].(string)
+		            // A concurrent creation may have won the race; that is not a
+		            // failure — the index we wanted now exists.
+		            if errType == "resource_already_exists_exception" {
+		                return nil
+		            }
 		            return errors.New(fmt.Sprintf("Cannot create/update elastic index [%d] %s: %s",
 		                res.StatusCode,
 		                raw["error"].(map[string]interface{})["type"],
