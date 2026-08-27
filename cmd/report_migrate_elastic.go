@@ -10,6 +10,8 @@ import (
     "strings"
     "time"
 
+    "golang.org/x/term"
+
     "github.com/helviojunior/intelparser/internal/ascii"
     "github.com/helviojunior/intelparser/internal/tools"
     "github.com/helviojunior/intelparser/pkg/log"
@@ -106,6 +108,42 @@ func init() {
     migrateElkCmd.Flags().IntVar(&migrateElkFlags.limit, "limit", 500, "How many documents to pull per search request (1-10000)")
 }
 
+// progressTicker paces the migration's progress lines. On a terminal the run is
+// being watched and the lines scroll past, so one every few items is useful.
+// Redirected to a file or a CI log every line is kept forever, and a line per 25
+// files out of 16k is noise — there the same progress is reported at most once
+// per interval instead. Mirrors the cadence split the ConvStatus display uses.
+type progressTicker struct {
+    isTerminal bool
+    every      int           // on a terminal: emit every N items
+    interval   time.Duration // otherwise: at most one line per interval
+    last       time.Time
+}
+
+func newProgressTicker(every int) *progressTicker {
+    return &progressTicker{
+        isTerminal: term.IsTerminal(int(os.Stdin.Fd())),
+        every:      every,
+        interval:   30 * time.Second,
+    }
+}
+
+// due reports whether progress at item n of total should be logged now. The
+// last item always reports, so a run never ends on a stale partial count.
+func (p *progressTicker) due(n, total int) bool {
+    if n >= total {
+        return true
+    }
+    if p.isTerminal {
+        return p.every > 0 && n%p.every == 0
+    }
+    if time.Since(p.last) < p.interval {
+        return false
+    }
+    p.last = time.Now()
+    return true
+}
+
 // oldFileDoc maps the fields stored by the old-model file index. The old
 // document _id is the file fingerprint; the leak date was stored as leak_date
 // (the File struct's own json tag is `date`, hence the explicit mapping here).
@@ -148,6 +186,7 @@ func migrateElastic(writer *writers.ElasticWriter, srcIndex string, limit int) e
     }
 
     files := make([]fileMeta, 0, total)
+    readProgress := newProgressTicker(limit * 10)
     // Same request body as elasticdump's scan — match_all sorted by _doc, which
     // is the cheapest possible order because it follows Lucene's own document
     // order and skips scoring entirely. content is the one field left out: the
@@ -160,7 +199,7 @@ func migrateElastic(writer *writers.ElasticWriter, srcIndex string, limit int) e
             return err
         }
         files = append(files, fileMeta{id: id, doc: &o})
-        if len(files)%(limit*10) == 0 {
+        if readProgress.due(len(files), int(total)) {
             log.Infof("Read %s/%s file documents", tools.FormatIntComma(len(files)), tools.FormatInt64Comma(total))
         }
         return nil
@@ -188,6 +227,7 @@ func migrateElastic(writer *writers.ElasticWriter, srcIndex string, limit int) e
     log.Infof("Migrating %s files from %q to %q (chronological replay, single worker)",
         tools.FormatIntComma(len(files)), srcIndex, writer.Index)
 
+    queueProgress := newProgressTicker(25)
     for i, fm := range files {
         file, err := buildFileWithLeaks(client, srcIndex, fm.id, fm.doc, limit)
         if err != nil {
@@ -196,7 +236,7 @@ func migrateElastic(writer *writers.ElasticWriter, srcIndex string, limit int) e
         if err := writer.Write(file); err != nil {
             return err
         }
-        if (i+1)%25 == 0 {
+        if queueProgress.due(i+1, len(files)) {
             log.Infof("Queued %s/%s files for migration",
                 tools.FormatIntComma(i+1), tools.FormatIntComma(len(files)))
         }
