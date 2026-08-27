@@ -472,7 +472,7 @@ func buildIndexBody(shards int, properties string) string {
 	return fmt.Sprintf(`{
             "settings": {
                 "number_of_shards": %d,
-                "number_of_replicas": 1,
+                "number_of_replicas": 0,
                 "index": {
                     "highlight.max_analyzed_offset": 10000000,
                     "codec": %q
