@@ -270,9 +270,17 @@ func convertFromDbTo(fromUri string, writer writers.Writer, status *ConvStatus) 
 	defer rows.Close()
 	wg := sync.WaitGroup{}
 
-	var file models.File
 	for rows.Next() {
-		conn.ScanRows(rows, &file)
+		// Fresh struct per row, and the scan error is checked: on a source whose
+		// schema does not match the model (e.g. date columns stored as epoch
+		// integers instead of datetime text) ScanRows fails part-way through,
+		// leaving whatever it managed to write behind. Reusing one struct and
+		// discarding that error silently shipped half-populated records whose
+		// Fingerprint held another row's value.
+		var file models.File
+		if err := conn.ScanRows(rows, &file); err != nil {
+			return fmt.Errorf("reading file row from %s: %w", fromUri, err)
+		}
 
 		logger := log.With("id", file.ID, "file", file.FileName)
 

@@ -157,6 +157,21 @@ A --from-file (or --from-db-uri) and --elasticsearch-uri must be specified.`)),
 
 		wg.Wait()
 
+		// Drain the writer before reporting or exiting. The Elastic writer
+		// ingests asynchronously, so without this the process walks away from
+		// whatever is still queued — every document still in flight is lost.
+		if fw, ok := writer.(writers.FlushableWriter); ok {
+			if err := fw.Flush(); err != nil {
+				log.Error("failed to flush writer", "err", err)
+				stCode = 5
+			}
+		}
+		if fw, ok := writer.(writers.FinalizableWriter); ok {
+			if err := fw.Finalize(); err != nil {
+				log.Error("failed to finalize writer", "err", err)
+			}
+		}
+
 		fmt.Fprintf(os.Stderr, "%s\n%s\r\033[A",
 			"                                                                                ",
 			"                                                                                ",
