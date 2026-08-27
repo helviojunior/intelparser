@@ -1,29 +1,30 @@
 package writers
 
 import (
+	"bytes"
+	"context"
+	"crypto/tls"
 	"encoding/json"
-	"time"
-	"net/url"
-	"math"
+	"errors"
 	"fmt"
+	"math"
+	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
-	"context"
-	"errors"
-	"bytes"
-	"net/http"
-	"crypto/tls"
+	"time"
+
 	//"reflect"
 	"io"
 	"os"
-    "strconv"
+	"strconv"
 
-	"github.com/helviojunior/intelparser/internal/tools"
-	"github.com/helviojunior/intelparser/pkg/models"
 	elk "github.com/elastic/go-elasticsearch/v8"
 	esapi "github.com/elastic/go-elasticsearch/v8/esapi"
+	"github.com/helviojunior/intelparser/internal/tools"
 	logger "github.com/helviojunior/intelparser/pkg/log"
+	"github.com/helviojunior/intelparser/pkg/models"
 )
 
 // fields in the main model to ignore. "fingerprint" is stripped from the file
@@ -56,7 +57,7 @@ type queueItem struct {
 // JsonWriter is a JSON lines writer
 type ElasticWriter struct {
 	Client *elk.Client
-	Index string
+	Index  string
 
 	// debug toggles the log level of operational (per-bulk, per-file, periodic
 	// metrics) messages. When true they are emitted at Info; when false they
@@ -133,9 +134,8 @@ type indexResponse struct {
 }
 
 type Interceptor struct {
-  base   	*http.Transport
+	base *http.Transport
 }
-
 
 func (i Interceptor) RoundTrip(req *http.Request) (*http.Response, error) {
 	// Header exigido pelo client do ES
@@ -146,7 +146,7 @@ func (i Interceptor) RoundTrip(req *http.Request) (*http.Response, error) {
 	if (req.Method == http.MethodGet || req.Method == http.MethodHead) && req.URL.Path == "/" {
 		str_body := ""
 		if req.Method != http.MethodHead {
-		
+
 			str_body = `{
 			  "version": { "number": "8.0.0-SNAPSHOT", "build_flavor": "default" },
 			  "tagline": "You Know, for Search"
@@ -178,7 +178,7 @@ func NewElasticWriter(uri string, debug bool) (*ElasticWriter, error) {
 
 	u, err := url.Parse(uri)
 	if err != nil {
-	    return nil, err
+		return nil, err
 	}
 
 	username := u.User.Username()
@@ -200,15 +200,15 @@ func NewElasticWriter(uri string, debug bool) (*ElasticWriter, error) {
 	}
 
 	conf := elk.Config{
-	    Addresses: []string{
-            fmt.Sprintf("%s://%s:%s/", u.Scheme, u.Hostname(), port),
-        },
-        //Username: username,
-        //Password: password,
-        //CACert:   cert,
+		Addresses: []string{
+			fmt.Sprintf("%s://%s:%s/", u.Scheme, u.Hostname(), port),
+		},
+		//Username: username,
+		//Password: password,
+		//CACert:   cert,
 		RetryOnStatus: []int{429, 502, 503, 504},
 		MaxRetries:    5,
-		RetryBackoff:  func(i int) time.Duration {
+		RetryBackoff: func(i int) time.Duration {
 			// A simple exponential delay
 			d := time.Duration(math.Exp2(float64(i))) * time.Second
 			if debug {
@@ -224,21 +224,21 @@ func NewElasticWriter(uri string, debug bool) (*ElasticWriter, error) {
 				MaxIdleConns:        256,
 				MaxIdleConnsPerHost: 64,
 				MaxConnsPerHost:     64,
-			    IdleConnTimeout:     90 * time.Second,
-			    DisableCompression:  false,
-			    ForceAttemptHTTP2:   true,
-			    TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
+				IdleConnTimeout:     90 * time.Second,
+				DisableCompression:  false,
+				ForceAttemptHTTP2:   true,
+				TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
 			},
 		},
 	}
 
 	// Check username and password from Environment Variables
 	if v1, ok := os.LookupEnv("INTELPARSER_OUTPUT_USERNAME"); ok {
-		conf.Username = v1;
+		conf.Username = v1
 		logger.Infof("Setting username %s using env.INTELPARSER_OUTPUT_USERNAME", v1)
 	}
 	if v1, ok := os.LookupEnv("INTELPARSER_OUTPUT_PASSWORD"); ok {
-		conf.Password = v1;
+		conf.Password = v1
 		logger.Infof("Setting password using env.INTELPARSER_OUTPUT_PASSWORD")
 	}
 
@@ -249,7 +249,7 @@ func NewElasticWriter(uri string, debug bool) (*ElasticWriter, error) {
 
 	wr.Client, err = elk.NewClient(conf)
 	if err != nil {
-	    return nil, err
+		return nil, err
 	}
 
 	// Faz um ping (chama GET / internamente)
@@ -264,7 +264,7 @@ func NewElasticWriter(uri string, debug bool) (*ElasticWriter, error) {
 			if i1 > 10 {
 				logger.Infof("Setting maximum ELK bulk count as %d using env.ELK_BULK_SIZE", i1)
 				elkBulkCount = int(i1)
-			}  
+			}
 		}
 	}
 
@@ -319,9 +319,10 @@ func NewElasticWriter(uri string, debug bool) (*ElasticWriter, error) {
 		elkCodec = v1
 	}
 
-	// File index (global, single): file metadata only. The document _id is the
-	// file fingerprint, so the fingerprint is no longer stored as a field.
-	err = wr.CreateIndex(wr.Index, buildIndexBody(`{
+	// File/control index (global, single): file metadata only. The document _id
+	// is the file fingerprint, so the fingerprint is no longer stored as a
+	// field. Named <index>_ctrl so the bare <index> name stays free.
+	err = wr.CreateIndex(wr.Index+"_ctrl", buildIndexBody(`{
                     "indexed_at": {"type": "date"},
                     "leak_date": {"type": "date"},
                     "name": {"type": "keyword"},
@@ -336,7 +337,7 @@ func NewElasticWriter(uri string, debug bool) (*ElasticWriter, error) {
                     "content": {"type": "text"}
                 }`))
 	if err != nil {
-	    return nil, err
+		return nil, err
 	}
 
 	// Leak indices (global, single, deduplicated): each holds ONLY the intrinsic
@@ -346,7 +347,7 @@ func NewElasticWriter(uri string, debug bool) (*ElasticWriter, error) {
 	// content hash (models.LeakIndexable.LeakID), which globally dedups the leak.
 
 	//Credential Index
-	err = wr.CreateIndex(wr.Index + "_creds", buildIndexBody(`{
+	err = wr.CreateIndex(wr.Index+"_creds", buildIndexBody(`{
                     "inserted_at": {"type": "date"},
                     "last_reference_at": {"type": "date"},
                     "rule": {"type": "keyword"},
@@ -360,35 +361,33 @@ func NewElasticWriter(uri string, debug bool) (*ElasticWriter, error) {
                     "entropy": {"type": "float"}
                 }`))
 	if err != nil {
-	    return nil, err
+		return nil, err
 	}
 
 	//Urls Index
-	err = wr.CreateIndex(wr.Index + "_urls", buildIndexBody(`{
+	err = wr.CreateIndex(wr.Index+"_urls", buildIndexBody(`{
                     "inserted_at": {"type": "date"},
                     "last_reference_at": {"type": "date"},
                     "domain": {"type": "keyword"},
                     "url": {"type": "keyword"}
                 }`))
 	if err != nil {
-	    return nil, err
+		return nil, err
 	}
 
-
 	//Emails Index
-	err = wr.CreateIndex(wr.Index + "_emails", buildIndexBody(`{
+	err = wr.CreateIndex(wr.Index+"_emails", buildIndexBody(`{
                     "inserted_at": {"type": "date"},
                     "last_reference_at": {"type": "date"},
                     "domain": {"type": "keyword"},
                     "email": {"type": "keyword"}
                 }`))
 	if err != nil {
-	    return nil, err
+		return nil, err
 	}
 
-
 	//Phone Index
-	err = wr.CreateIndex(wr.Index + "_phone", buildIndexBody(`{
+	err = wr.CreateIndex(wr.Index+"_phone", buildIndexBody(`{
                     "inserted_at": {"type": "date"},
                     "last_reference_at": {"type": "date"},
                     "country": {"type": "keyword"},
@@ -396,12 +395,11 @@ func NewElasticWriter(uri string, debug bool) (*ElasticWriter, error) {
                     "phone": {"type": "keyword"}
                 }`))
 	if err != nil {
-	    return nil, err
+		return nil, err
 	}
 
-
 	//Document Index (CPF / CNPJ)
-	err = wr.CreateIndex(wr.Index + "_document", buildIndexBody(`{
+	err = wr.CreateIndex(wr.Index+"_document", buildIndexBody(`{
                     "inserted_at": {"type": "date"},
                     "last_reference_at": {"type": "date"},
                     "raw": {"type": "text"},
@@ -410,13 +408,13 @@ func NewElasticWriter(uri string, debug bool) (*ElasticWriter, error) {
                     "is_cnpj": {"type": "boolean"}
                 }`))
 	if err != nil {
-	    return nil, err
+		return nil, err
 	}
 
 	// Apply ingest-friendly settings to all managed static indices (new and
 	// existing). Monthly reference indices are created lazily per import month
 	// (see ensureRefIndex), which applies the same settings on creation.
-	for _, idx := range []string{wr.Index, wr.Index + "_creds", wr.Index + "_urls", wr.Index + "_emails", wr.Index + "_phone", wr.Index + "_document"} {
+	for _, idx := range []string{wr.Index + "_ctrl", wr.Index + "_creds", wr.Index + "_urls", wr.Index + "_emails", wr.Index + "_phone", wr.Index + "_document"} {
 		if err := wr.applyIngestSettings(idx); err != nil {
 			logger.Warnf("Could not apply ingest settings to %s: %s", idx, err)
 		}
@@ -832,8 +830,8 @@ func renderKVTable(title string, rows [][2]string) string {
 	kw := maxK + 2
 	vw := maxV + 2
 
-	top    := "┌" + strings.Repeat("─", kw) + "┬" + strings.Repeat("─", vw) + "┐"
-	sep    := "├" + strings.Repeat("─", kw) + "┼" + strings.Repeat("─", vw) + "┤"
+	top := "┌" + strings.Repeat("─", kw) + "┬" + strings.Repeat("─", vw) + "┐"
+	sep := "├" + strings.Repeat("─", kw) + "┼" + strings.Repeat("─", vw) + "┤"
 	bottom := "└" + strings.Repeat("─", kw) + "┴" + strings.Repeat("─", vw) + "┘"
 
 	center := func(s string, width int) string {
@@ -855,18 +853,30 @@ func renderKVTable(title string, rows [][2]string) string {
 
 	var b strings.Builder
 	if title != "" {
-		b.WriteString(title + "\n")
+		b.WriteString(title)
+		b.WriteString("\n")
 	}
-	b.WriteString(top + "\n")
-	b.WriteString("│" + center(keyHeader, kw) + "│" + center(valHeader, vw) + "│\n")
-	b.WriteString(sep + "\n")
+	b.WriteString(top)
+	b.WriteString("\n")
+	b.WriteString("│")
+	b.WriteString(center(keyHeader, kw))
+	b.WriteString("│")
+	b.WriteString(center(valHeader, vw))
+	b.WriteString("│\n")
+	b.WriteString(sep)
+	b.WriteString("\n")
 	// Data rows are emitted back-to-back without a separator between them —
 	// keeps the table compact, especially when the surrounding pipeline
 	// prefixes every line with a timestamp.
 	for _, r := range rows {
-		b.WriteString("│" + left(r[0], kw) + "│" + left(r[1], vw) + "│\n")
+		b.WriteString("│")
+		b.WriteString(left(r[0], kw))
+		b.WriteString("│")
+		b.WriteString(left(r[1], vw))
+		b.WriteString("│\n")
 	}
-	b.WriteString(bottom + "\n")
+	b.WriteString(bottom)
+	b.WriteString("\n")
 	return b.String()
 }
 
@@ -1052,7 +1062,7 @@ func (ew *ElasticWriter) writeSync(result *models.File) error {
 		return err
 	}
 
-	res, err := ew.Client.Index(ew.Index, bytes.NewReader(b_data),
+	res, err := ew.Client.Index(ew.Index+"_ctrl", bytes.NewReader(b_data),
 		ew.Client.Index.WithDocumentID(fileID))
 	if err != nil {
 		return err
@@ -1071,185 +1081,180 @@ func (ew *ElasticWriter) CreateIndex(index string, mapping string) error {
 
 	response, err := ew.Client.Indices.Exists([]string{index})
 	if err != nil {
-	    return err
+		return err
 	}
 	defer response.Body.Close()
 
-    if response.IsError() {
+	if response.IsError() {
 
 		if response.StatusCode == 404 {
 			indexReq := esapi.IndicesCreateRequest{
-			    Index: index,
-			    Body: strings.NewReader(string(mapping)),
+				Index: index,
+				Body:  strings.NewReader(string(mapping)),
 			}
 
 			logger.Infof("Creating elastic index %s", index)
 			res, err := indexReq.Do(context.Background(), ew.Client)
 			if err != nil {
-			    return err
+				return err
 			}
 			defer res.Body.Close()
 
 			if res.IsError() {
 
-		        if err := json.NewDecoder(res.Body).Decode(&raw); err != nil {
-		            return errors.New(fmt.Sprintf("Failure to to parse response body: %s", err))
-		        } else {
-		            errType, _ := raw["error"].(map[string]interface{})["type"].(string)
-		            // A concurrent creation may have won the race; that is not a
-		            // failure — the index we wanted now exists.
-		            if errType == "resource_already_exists_exception" {
-		                return nil
-		            }
-		            return errors.New(fmt.Sprintf("Cannot create/update elastic index [%d] %s: %s",
-		                res.StatusCode,
-		                raw["error"].(map[string]interface{})["type"],
-		                raw["error"].(map[string]interface{})["reason"],
-		            ))
-		        }
+				if err := json.NewDecoder(res.Body).Decode(&raw); err != nil {
+					return errors.New(fmt.Sprintf("Failure to to parse response body: %s", err))
+				} else {
+					errType, _ := raw["error"].(map[string]interface{})["type"].(string)
+					// A concurrent creation may have won the race; that is not a
+					// failure — the index we wanted now exists.
+					if errType == "resource_already_exists_exception" {
+						return nil
+					}
+					return fmt.Errorf("Cannot create/update elastic index [%d] %s: %s",
+						res.StatusCode,
+						raw["error"].(map[string]interface{})["type"],
+						raw["error"].(map[string]interface{})["reason"])
+				}
 
 			}
 
-		}else{
+		} else {
 
-	        if err := json.NewDecoder(response.Body).Decode(&raw); err != nil {
-	            return errors.New(fmt.Sprintf("Failure to to parse response body: %s", err))
-	        } else {
-	            return errors.New(fmt.Sprintf("Cannot get elastic index [%d] %s: %s",
-	                response.StatusCode,
-	                raw["error"].(map[string]interface{})["type"],
-	                raw["error"].(map[string]interface{})["reason"],
-	            ))
-	        }
-
+			if err := json.NewDecoder(response.Body).Decode(&raw); err != nil {
+				return errors.New(fmt.Sprintf("Failure to to parse response body: %s", err))
+			} else {
+				return fmt.Errorf("Cannot get elastic index [%d] %s: %s",
+					response.StatusCode,
+					raw["error"].(map[string]interface{})["type"],
+					raw["error"].(map[string]interface{})["reason"])
+			}
 
 		}
 
-    }
+	}
 
-    return nil
+	return nil
 
 }
 
 // sendBulk ships a batch of documents to `index` using the given bulk action.
 //
 //   - "index"  : each doc value is a full source document; the meta line is
-//                { "index": { "_id": <id> } } and an existing doc is replaced.
+//     { "index": { "_id": <id> } } and an existing doc is replaced.
 //   - "update" : each doc value is an update body ({"doc":...,"upsert":...});
-//                the meta line is { "update": { "_id": <id>, "retry_on_conflict": 5 } }
-//                so concurrent upserts of the same shared leak retry instead of
-//                failing with a version conflict.
+//     the meta line is { "update": { "_id": <id>, "retry_on_conflict": 5 } }
+//     so concurrent upserts of the same shared leak retry instead of
+//     failing with a version conflict.
 func (ew *ElasticWriter) sendBulk(index string, action string, docs map[string][]byte) error {
-    var raw map[string]interface{}
-    var buf bytes.Buffer
-    size := 0
-    for id, doc := range docs {
-    	var meta []byte
-    	if action == "update" {
-    		meta = []byte(fmt.Sprintf(`{ "update" : { "_id" : %q, "retry_on_conflict" : 5 } }%s`, id, "\n"))
-    	} else {
-    		meta = []byte(fmt.Sprintf(`{ "index" : { "_id" : %q } }%s`, id, "\n"))
-    	}
-    	data := []byte(doc)
-    	data = append(data, "\n"...)
+	var raw map[string]interface{}
+	var buf bytes.Buffer
+	size := 0
+	for id, doc := range docs {
+		var meta []byte
+		if action == "update" {
+			meta = []byte(fmt.Sprintf(`{ "update" : { "_id" : %q, "retry_on_conflict" : 5 } }%s`, id, "\n"))
+		} else {
+			meta = []byte(fmt.Sprintf(`{ "index" : { "_id" : %q } }%s`, id, "\n"))
+		}
+		data := []byte(doc)
+		data = append(data, "\n"...)
 
-    	size += len(meta) + len(data)
-    	buf.Grow(len(meta) + len(data))
+		size += len(meta) + len(data)
+		buf.Grow(len(meta) + len(data))
 		buf.Write(meta)
 		buf.Write(data)
 
-    }
+	}
 
-    ew.logf("Elastic bulk start: %d docs (%s), %s -> %s", len(docs), action, tools.Bytes(uint64(size)), index)
+	ew.logf("Elastic bulk start: %d docs (%s), %s -> %s", len(docs), action, tools.Bytes(uint64(size)), index)
 
-    start := time.Now()
-    for i := range 10 {
+	start := time.Now()
+	for i := range 10 {
 
-        reqStart := time.Now()
-        res, err := ew.Client.Bulk(bytes.NewReader(buf.Bytes()), ew.Client.Bulk.WithIndex(index))
-        if err != nil {
-            return err
-        }
-        defer res.Body.Close()
-        reqDur := time.Since(reqStart)
-        if i > 0 {
-            ew.metBulkRetries.Add(1)
-        }
+		reqStart := time.Now()
+		res, err := ew.Client.Bulk(bytes.NewReader(buf.Bytes()), ew.Client.Bulk.WithIndex(index))
+		if err != nil {
+			return err
+		}
+		defer res.Body.Close()
+		reqDur := time.Since(reqStart)
+		if i > 0 {
+			ew.metBulkRetries.Add(1)
+		}
 
-        if res.IsError() {
+		if res.IsError() {
 
-            if i >= 5 {
-                if err := json.NewDecoder(res.Body).Decode(&raw); err != nil {
-                    return errors.New(fmt.Sprintf("Failure to to parse response body: %s", err))
-                } else {
-                    return errors.New(fmt.Sprintf("Error: [%d] %s: %s",
-                        res.StatusCode,
-                        raw["error"].(map[string]interface{})["type"],
-                        raw["error"].(map[string]interface{})["reason"],
-                    ))
-                }
+			if i >= 5 {
+				if err := json.NewDecoder(res.Body).Decode(&raw); err != nil {
+					return fmt.Errorf("Failure to to parse response body: %s", err)
+				} else {
+					return fmt.Errorf("Error: [%d] %s: %s",
+						res.StatusCode,
+						raw["error"].(map[string]interface{})["type"],
+						raw["error"].(map[string]interface{})["reason"])
+				}
 
-            }
+			}
 
-            // A successful response might still contain errors for particular documents...
-            //
-        } else {
-        	var blk *bulkResponse
-            if err := json.NewDecoder(res.Body).Decode(&blk); err != nil {
-                return errors.New(fmt.Sprintf("Failure to to parse response body: %s", err))
-            } else {
-                // Count item-level errors and log a single aggregated line
-                // instead of spamming one log per failed doc.
-                itemErrs := 0
-                var firstErr string
-                for _, d := range blk.Items {
-                    // The item is keyed by the action used; pick whichever the
-                    // server populated (Status != 0).
-                    r := d.Index
-                    if r.Status == 0 {
-                        r = d.Update
-                    }
-                    if r.Status > 201 {
-                        itemErrs++
-                        if firstErr == "" {
-                            firstErr = fmt.Sprintf("[%d] %s: %s",
-                                r.Status, r.Error.Type, r.Error.Reason)
-                        }
-                    }
-                }
-                if itemErrs > 0 {
-                    ew.logf("Elastic bulk %s: %d/%d items failed (first: %s)",
-                        index, itemErrs, len(blk.Items), firstErr)
-                }
-            }
-        }
+			// A successful response might still contain errors for particular documents...
+			//
+		} else {
+			var blk *bulkResponse
+			if err := json.NewDecoder(res.Body).Decode(&blk); err != nil {
+				return fmt.Errorf("Failure to to parse response body: %s", err)
+			} else {
+				// Count item-level errors and log a single aggregated line
+				// instead of spamming one log per failed doc.
+				itemErrs := 0
+				var firstErr string
+				for _, d := range blk.Items {
+					// The item is keyed by the action used; pick whichever the
+					// server populated (Status != 0).
+					r := d.Index
+					if r.Status == 0 {
+						r = d.Update
+					}
+					if r.Status > 201 {
+						itemErrs++
+						if firstErr == "" {
+							firstErr = fmt.Sprintf("[%d] %s: %s",
+								r.Status, r.Error.Type, r.Error.Reason)
+						}
+					}
+				}
+				if itemErrs > 0 {
+					ew.logf("Elastic bulk %s: %d/%d items failed (first: %s)",
+						index, itemErrs, len(blk.Items), firstErr)
+				}
+			}
+		}
 
-        if res.StatusCode == 200 || res.StatusCode == 201 {
-            total := time.Since(start)
-            bps := float64(size) / total.Seconds()
-            dps := float64(len(docs)) / total.Seconds()
-            ew.recordBulk(len(docs), size, reqDur)
-            ew.logf("Elastic bulk OK %s: %d docs, %s in %s (req=%s, %.0f docs/s, %s/s)",
-                index, len(docs), tools.Bytes(uint64(size)), total, reqDur,
-                dps, tools.Bytes(uint64(bps)))
-            return nil
-        }
+		if res.StatusCode == 200 || res.StatusCode == 201 {
+			total := time.Since(start)
+			bps := float64(size) / total.Seconds()
+			dps := float64(len(docs)) / total.Seconds()
+			ew.recordBulk(len(docs), size, reqDur)
+			ew.logf("Elastic bulk OK %s: %d docs, %s in %s (req=%s, %.0f docs/s, %s/s)",
+				index, len(docs), tools.Bytes(uint64(size)), total, reqDur,
+				dps, tools.Bytes(uint64(bps)))
+			return nil
+		}
 
-        ew.logf("Elastic bulk attempt %d on %s failed with status %d in %s; retrying",
-            i+1, index, res.StatusCode, reqDur)
-        time.Sleep(1 * time.Second)
-    }
+		ew.logf("Elastic bulk attempt %d on %s failed with status %d in %s; retrying",
+			i+1, index, res.StatusCode, reqDur)
+		time.Sleep(1 * time.Second)
+	}
 
-    return errors.New("Cannot create/update document")
+	return errors.New("Cannot create/update document")
 }
-
 
 func (ew *ElasticWriter) CreateDoc(index string, data []byte, doc_id string) error {
 	var raw map[string]interface{}
 	for i := range 10 {
 		res, err := ew.Client.Index(index, bytes.NewReader(data), ew.Client.Index.WithDocumentID(doc_id))
 		if err != nil {
-		    return err
+			return err
 		}
 		defer res.Body.Close()
 
@@ -1257,13 +1262,12 @@ func (ew *ElasticWriter) CreateDoc(index string, data []byte, doc_id string) err
 
 			if i >= 5 {
 				if err := json.NewDecoder(res.Body).Decode(&raw); err != nil {
-					return errors.New(fmt.Sprintf("Failure to to parse response body: %s", err))
+					return fmt.Errorf("Failure to to parse response body: %s", err)
 				} else {
-					return errors.New(fmt.Sprintf("Error: [%d] %s: %s",
+					return fmt.Errorf("Error: [%d] %s: %s",
 						res.StatusCode,
 						raw["error"].(map[string]interface{})["type"],
-						raw["error"].(map[string]interface{})["reason"],
-					))
+						raw["error"].(map[string]interface{})["reason"])
 				}
 
 			}
@@ -1277,16 +1281,16 @@ func (ew *ElasticWriter) CreateDoc(index string, data []byte, doc_id string) err
 			}
 
 			//bodyBytes, err := io.ReadAll(res.Body)
-		    //if err != nil {
-		    //    return err
-		    //}
-		    //bodyString := string(bodyBytes)
+			//if err != nil {
+			//    return err
+			//}
+			//bodyString := string(bodyBytes)
 			//fmt.Printf("Resp: %s", bodyString)
 
 			var idxRes *indexResponse
-			
+
 			if err := json.NewDecoder(res.Body).Decode(&idxRes); err != nil {
-				return errors.New(fmt.Sprintf("Failure to to parse response body: %s", err))
+				return fmt.Errorf("Failure to to parse response body: %s", err)
 			} else {
 				//Debug result
 			}
@@ -1297,8 +1301,6 @@ func (ew *ElasticWriter) CreateDoc(index string, data []byte, doc_id string) err
 
 	return errors.New("Cannot create/update document")
 }
-
-
 
 func (ew *ElasticWriter) MarshalAppend(marshalled []byte, new_data map[string]interface{}) ([]byte, error) {
 	t_data := make(map[string]interface{})
@@ -1312,11 +1314,11 @@ func (ew *ElasticWriter) MarshalAppend(marshalled []byte, new_data map[string]in
 		}
 
 		data[k] = v
-    }
+	}
 
-    for k, v := range new_data {
-    	data[k] = v
-    }
+	for k, v := range new_data {
+		data[k] = v
+	}
 
 	j_data, err := json.Marshal(data)
 	if err != nil {
@@ -1325,7 +1327,6 @@ func (ew *ElasticWriter) MarshalAppend(marshalled []byte, new_data map[string]in
 
 	return j_data, nil
 }
-
 
 func (ew *ElasticWriter) Marshal(v any) ([]byte, error) {
 	j, err := json.Marshal(v)
@@ -1344,7 +1345,7 @@ func (ew *ElasticWriter) Marshal(v any) ([]byte, error) {
 		}
 
 		data[k] = v
-    }
+	}
 
 	j_data, err := json.Marshal(data)
 	if err != nil {

@@ -9,29 +9,30 @@
 package writers
 
 import (
+	"bytes"
+	"context"
+	"crypto/tls"
 	"encoding/json"
-	"time"
-	"net/url"
-	"math"
+	"errors"
 	"fmt"
+	"math"
+	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
-	"context"
-	"errors"
-	"bytes"
-	"net/http"
-	"crypto/tls"
+	"time"
+
 	//"reflect"
 	"io"
 	"os"
-    "strconv"
+	"strconv"
 
-	"github.com/helviojunior/intelparser/internal/tools"
-	"github.com/helviojunior/intelparser/pkg/models"
 	elk "github.com/elastic/go-elasticsearch/v8"
 	esapi "github.com/elastic/go-elasticsearch/v8/esapi"
+	"github.com/helviojunior/intelparser/internal/tools"
 	logger "github.com/helviojunior/intelparser/pkg/log"
+	"github.com/helviojunior/intelparser/pkg/models"
 )
 
 // fields in the main model to ignore
@@ -62,7 +63,7 @@ type legacyQueueItem struct {
 // JsonWriter is a JSON lines writer
 type ElasticLegacyWriter struct {
 	Client *elk.Client
-	Index string
+	Index  string
 
 	// debug toggles the log level of operational (per-bulk, per-file, periodic
 	// metrics) messages. When true they are emitted at Info; when false they
@@ -124,9 +125,8 @@ type legacyIndexResponse struct {
 }
 
 type LegacyInterceptor struct {
-  base   	*http.Transport
+	base *http.Transport
 }
-
 
 func (i LegacyInterceptor) RoundTrip(req *http.Request) (*http.Response, error) {
 	// Header exigido pelo client do ES
@@ -137,7 +137,7 @@ func (i LegacyInterceptor) RoundTrip(req *http.Request) (*http.Response, error) 
 	if (req.Method == http.MethodGet || req.Method == http.MethodHead) && req.URL.Path == "/" {
 		str_body := ""
 		if req.Method != http.MethodHead {
-		
+
 			str_body = `{
 			  "version": { "number": "8.0.0-SNAPSHOT", "build_flavor": "default" },
 			  "tagline": "You Know, for Search"
@@ -170,7 +170,7 @@ func NewElasticLegacyWriter(uri string, debug bool) (*ElasticLegacyWriter, error
 
 	u, err := url.Parse(uri)
 	if err != nil {
-	    return nil, err
+		return nil, err
 	}
 
 	username := u.User.Username()
@@ -192,15 +192,15 @@ func NewElasticLegacyWriter(uri string, debug bool) (*ElasticLegacyWriter, error
 	}
 
 	conf := elk.Config{
-	    Addresses: []string{
-            fmt.Sprintf("%s://%s:%s/", u.Scheme, u.Hostname(), port),
-        },
-        //Username: username,
-        //Password: password,
-        //CACert:   cert,
+		Addresses: []string{
+			fmt.Sprintf("%s://%s:%s/", u.Scheme, u.Hostname(), port),
+		},
+		//Username: username,
+		//Password: password,
+		//CACert:   cert,
 		RetryOnStatus: []int{429, 502, 503, 504},
 		MaxRetries:    5,
-		RetryBackoff:  func(i int) time.Duration {
+		RetryBackoff: func(i int) time.Duration {
 			// A simple exponential delay
 			d := time.Duration(math.Exp2(float64(i))) * time.Second
 			if debug {
@@ -216,21 +216,21 @@ func NewElasticLegacyWriter(uri string, debug bool) (*ElasticLegacyWriter, error
 				MaxIdleConns:        256,
 				MaxIdleConnsPerHost: 64,
 				MaxConnsPerHost:     64,
-			    IdleConnTimeout:     90 * time.Second,
-			    DisableCompression:  false,
-			    ForceAttemptHTTP2:   true,
-			    TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
+				IdleConnTimeout:     90 * time.Second,
+				DisableCompression:  false,
+				ForceAttemptHTTP2:   true,
+				TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
 			},
 		},
 	}
 
 	// Check username and password from Environment Variables
 	if v1, ok := os.LookupEnv("INTELPARSER_OUTPUT_USERNAME"); ok {
-		conf.Username = v1;
+		conf.Username = v1
 		logger.Infof("Setting username %s using env.INTELPARSER_OUTPUT_USERNAME", v1)
 	}
 	if v1, ok := os.LookupEnv("INTELPARSER_OUTPUT_PASSWORD"); ok {
-		conf.Password = v1;
+		conf.Password = v1
 		logger.Infof("Setting password using env.INTELPARSER_OUTPUT_PASSWORD")
 	}
 
@@ -241,7 +241,7 @@ func NewElasticLegacyWriter(uri string, debug bool) (*ElasticLegacyWriter, error
 
 	wr.Client, err = elk.NewClient(conf)
 	if err != nil {
-	    return nil, err
+		return nil, err
 	}
 
 	// Faz um ping (chama GET / internamente)
@@ -256,7 +256,7 @@ func NewElasticLegacyWriter(uri string, debug bool) (*ElasticLegacyWriter, error
 			if i1 > 10 {
 				logger.Infof("Setting maximum ELK bulk count as %d using env.ELK_BULK_SIZE", i1)
 				elkLegacyBulkCount = int(i1)
-			}  
+			}
 		}
 	}
 
@@ -328,11 +328,11 @@ func NewElasticLegacyWriter(uri string, debug bool) (*ElasticLegacyWriter, error
                     "content": {"type": "text"}
                 }`))
 	if err != nil {
-	    return nil, err
+		return nil, err
 	}
 
 	//Credential Index
-	err = wr.CreateIndex(wr.Index + "_creds", buildLegacyIndexBody(`{
+	err = wr.CreateIndex(wr.Index+"_creds", buildLegacyIndexBody(`{
                     "time": {"type": "date"},
                     "fingerprint": {"type": "keyword"},
                     "rule": {"type": "keyword"},
@@ -349,11 +349,11 @@ func NewElasticLegacyWriter(uri string, debug bool) (*ElasticLegacyWriter, error
                     "file_id": {"type": "keyword"}
                 }`))
 	if err != nil {
-	    return nil, err
+		return nil, err
 	}
 
 	//Urls Index
-	err = wr.CreateIndex(wr.Index + "_urls", buildLegacyIndexBody(`{
+	err = wr.CreateIndex(wr.Index+"_urls", buildLegacyIndexBody(`{
                     "time": {"type": "date"},
                     "fingerprint": {"type": "keyword"},
                     "domain": {"type": "keyword"},
@@ -363,12 +363,11 @@ func NewElasticLegacyWriter(uri string, debug bool) (*ElasticLegacyWriter, error
                     "file_id": {"type": "keyword"}
                 }`))
 	if err != nil {
-	    return nil, err
+		return nil, err
 	}
 
-
 	//Emails Index
-	err = wr.CreateIndex(wr.Index + "_emails", buildLegacyIndexBody(`{
+	err = wr.CreateIndex(wr.Index+"_emails", buildLegacyIndexBody(`{
                     "time": {"type": "date"},
                     "fingerprint": {"type": "keyword"},
                     "domain": {"type": "keyword"},
@@ -378,12 +377,11 @@ func NewElasticLegacyWriter(uri string, debug bool) (*ElasticLegacyWriter, error
                     "file_id": {"type": "keyword"}
                 }`))
 	if err != nil {
-	    return nil, err
+		return nil, err
 	}
 
-
 	//Phone Index
-	err = wr.CreateIndex(wr.Index + "_phone", buildLegacyIndexBody(`{
+	err = wr.CreateIndex(wr.Index+"_phone", buildLegacyIndexBody(`{
                     "time": {"type": "date"},
                     "fingerprint": {"type": "keyword"},
                     "country": {"type": "keyword"},
@@ -397,12 +395,11 @@ func NewElasticLegacyWriter(uri string, debug bool) (*ElasticLegacyWriter, error
                     "file_id": {"type": "keyword"}
                 }`))
 	if err != nil {
-	    return nil, err
+		return nil, err
 	}
 
-
 	//Document Index (CPF / CNPJ)
-	err = wr.CreateIndex(wr.Index + "_document", buildLegacyIndexBody(`{
+	err = wr.CreateIndex(wr.Index+"_document", buildLegacyIndexBody(`{
                     "time": {"type": "date"},
                     "fingerprint": {"type": "keyword"},
                     "raw": {"type": "text"},
@@ -417,7 +414,7 @@ func NewElasticLegacyWriter(uri string, debug bool) (*ElasticLegacyWriter, error
                     "file_id": {"type": "keyword"}
                 }`))
 	if err != nil {
-	    return nil, err
+		return nil, err
 	}
 
 	// Apply ingest-friendly settings to all managed indices (new and existing).
@@ -877,160 +874,155 @@ func (ew *ElasticLegacyWriter) CreateIndex(index string, mapping string) error {
 
 	response, err := ew.Client.Indices.Exists([]string{index})
 	if err != nil {
-	    return err
+		return err
 	}
 	defer response.Body.Close()
 
-    if response.IsError() {
+	if response.IsError() {
 
 		if response.StatusCode == 404 {
 			indexReq := esapi.IndicesCreateRequest{
-			    Index: index,
-			    Body: strings.NewReader(string(mapping)),
+				Index: index,
+				Body:  strings.NewReader(string(mapping)),
 			}
 
 			logger.Infof("Creating elastic index %s", index)
 			res, err := indexReq.Do(context.Background(), ew.Client)
 			if err != nil {
-			    return err
+				return err
 			}
 			defer res.Body.Close()
 
 			if res.IsError() {
 
-		        if err := json.NewDecoder(res.Body).Decode(&raw); err != nil {
-		            return errors.New(fmt.Sprintf("Failure to to parse response body: %s", err))
-		        } else {
-		            return errors.New(fmt.Sprintf("Cannot create/update elastic index [%d] %s: %s",
-		                res.StatusCode,
-		                raw["error"].(map[string]interface{})["type"],
-		                raw["error"].(map[string]interface{})["reason"],
-		            ))
-		        }
+				if err := json.NewDecoder(res.Body).Decode(&raw); err != nil {
+					return fmt.Errorf("Failure to to parse response body: %s", err)
+				} else {
+					return fmt.Errorf("Cannot create/update elastic index [%d] %s: %s",
+						res.StatusCode,
+						raw["error"].(map[string]interface{})["type"],
+						raw["error"].(map[string]interface{})["reason"])
+				}
 
 			}
 
-		}else{
+		} else {
 
-	        if err := json.NewDecoder(response.Body).Decode(&raw); err != nil {
-	            return errors.New(fmt.Sprintf("Failure to to parse response body: %s", err))
-	        } else {
-	            return errors.New(fmt.Sprintf("Cannot get elastic index [%d] %s: %s",
-	                response.StatusCode,
-	                raw["error"].(map[string]interface{})["type"],
-	                raw["error"].(map[string]interface{})["reason"],
-	            ))
-	        }
-
+			if err := json.NewDecoder(response.Body).Decode(&raw); err != nil {
+				return fmt.Errorf("Failure to to parse response body: %s", err)
+			} else {
+				return fmt.Errorf("Cannot get elastic index [%d] %s: %s",
+					response.StatusCode,
+					raw["error"].(map[string]interface{})["type"],
+					raw["error"].(map[string]interface{})["reason"])
+			}
 
 		}
 
-    }
+	}
 
-    return nil
+	return nil
 
 }
 
 func (ew *ElasticLegacyWriter) CreateDocBulk(index string, docs map[string][]byte) error {
-    var raw map[string]interface{}
-    var buf bytes.Buffer
-    size := 0
-    for id, doc := range docs {
-    	meta := []byte(fmt.Sprintf(`{ "index" : { "_id" : "%s" } }%s`, id, "\n"))
-    	data := []byte(doc)
-    	data = append(data, "\n"...)
+	var raw map[string]interface{}
+	var buf bytes.Buffer
+	size := 0
+	for id, doc := range docs {
+		meta := []byte(fmt.Sprintf(`{ "index" : { "_id" : "%s" } }%s`, id, "\n"))
+		data := []byte(doc)
+		data = append(data, "\n"...)
 
-    	size += len(meta) + len(data)
-    	buf.Grow(len(meta) + len(data))
+		size += len(meta) + len(data)
+		buf.Grow(len(meta) + len(data))
 		buf.Write(meta)
 		buf.Write(data)
 
-    }
+	}
 
-    ew.logf("Elastic bulk start: %d docs, %s -> %s", len(docs), tools.Bytes(uint64(size)), index)
+	ew.logf("Elastic bulk start: %d docs, %s -> %s", len(docs), tools.Bytes(uint64(size)), index)
 
-    start := time.Now()
-    for i := range 10 {
+	start := time.Now()
+	for i := range 10 {
 
-        reqStart := time.Now()
-        res, err := ew.Client.Bulk(bytes.NewReader(buf.Bytes()), ew.Client.Bulk.WithIndex(index))
-        if err != nil {
-            return err
-        }
-        defer res.Body.Close()
-        reqDur := time.Since(reqStart)
-        if i > 0 {
-            ew.metBulkRetries.Add(1)
-        }
+		reqStart := time.Now()
+		res, err := ew.Client.Bulk(bytes.NewReader(buf.Bytes()), ew.Client.Bulk.WithIndex(index))
+		if err != nil {
+			return err
+		}
+		defer res.Body.Close()
+		reqDur := time.Since(reqStart)
+		if i > 0 {
+			ew.metBulkRetries.Add(1)
+		}
 
-        if res.IsError() {
+		if res.IsError() {
 
-            if i >= 5 {
-                if err := json.NewDecoder(res.Body).Decode(&raw); err != nil {
-                    return errors.New(fmt.Sprintf("Failure to to parse response body: %s", err))
-                } else {
-                    return errors.New(fmt.Sprintf("Error: [%d] %s: %s",
-                        res.StatusCode,
-                        raw["error"].(map[string]interface{})["type"],
-                        raw["error"].(map[string]interface{})["reason"],
-                    ))
-                }
+			if i >= 5 {
+				if err := json.NewDecoder(res.Body).Decode(&raw); err != nil {
+					return fmt.Errorf("Failure to to parse response body: %s", err)
+				} else {
+					return fmt.Errorf("Error: [%d] %s: %s",
+						res.StatusCode,
+						raw["error"].(map[string]interface{})["type"],
+						raw["error"].(map[string]interface{})["reason"])
+				}
 
-            }
+			}
 
-            // A successful response might still contain errors for particular documents...
-            //
-        } else {
-        	var blk *legacyBulkResponse
-            if err := json.NewDecoder(res.Body).Decode(&blk); err != nil {
-                return errors.New(fmt.Sprintf("Failure to to parse response body: %s", err))
-            } else {
-                // Count item-level errors and log a single aggregated line
-                // instead of spamming one log per failed doc.
-                itemErrs := 0
-                var firstErr string
-                for _, d := range blk.Items {
-                    if d.Index.Status > 201 {
-                        itemErrs++
-                        if firstErr == "" {
-                            firstErr = fmt.Sprintf("[%d] %s: %s",
-                                d.Index.Status, d.Index.Error.Type, d.Index.Error.Reason)
-                        }
-                    }
-                }
-                if itemErrs > 0 {
-                    ew.logf("Elastic bulk %s: %d/%d items failed (first: %s)",
-                        index, itemErrs, len(blk.Items), firstErr)
-                }
-            }
-        }
+			// A successful response might still contain errors for particular documents...
+			//
+		} else {
+			var blk *legacyBulkResponse
+			if err := json.NewDecoder(res.Body).Decode(&blk); err != nil {
+				return errors.New(fmt.Sprintf("Failure to to parse response body: %s", err))
+			} else {
+				// Count item-level errors and log a single aggregated line
+				// instead of spamming one log per failed doc.
+				itemErrs := 0
+				var firstErr string
+				for _, d := range blk.Items {
+					if d.Index.Status > 201 {
+						itemErrs++
+						if firstErr == "" {
+							firstErr = fmt.Sprintf("[%d] %s: %s",
+								d.Index.Status, d.Index.Error.Type, d.Index.Error.Reason)
+						}
+					}
+				}
+				if itemErrs > 0 {
+					ew.logf("Elastic bulk %s: %d/%d items failed (first: %s)",
+						index, itemErrs, len(blk.Items), firstErr)
+				}
+			}
+		}
 
-        if res.StatusCode == 200 || res.StatusCode == 201 {
-            total := time.Since(start)
-            bps := float64(size) / total.Seconds()
-            dps := float64(len(docs)) / total.Seconds()
-            ew.recordBulk(len(docs), size, reqDur)
-            ew.logf("Elastic bulk OK %s: %d docs, %s in %s (req=%s, %.0f docs/s, %s/s)",
-                index, len(docs), tools.Bytes(uint64(size)), total, reqDur,
-                dps, tools.Bytes(uint64(bps)))
-            return nil
-        }
+		if res.StatusCode == 200 || res.StatusCode == 201 {
+			total := time.Since(start)
+			bps := float64(size) / total.Seconds()
+			dps := float64(len(docs)) / total.Seconds()
+			ew.recordBulk(len(docs), size, reqDur)
+			ew.logf("Elastic bulk OK %s: %d docs, %s in %s (req=%s, %.0f docs/s, %s/s)",
+				index, len(docs), tools.Bytes(uint64(size)), total, reqDur,
+				dps, tools.Bytes(uint64(bps)))
+			return nil
+		}
 
-        ew.logf("Elastic bulk attempt %d on %s failed with status %d in %s; retrying",
-            i+1, index, res.StatusCode, reqDur)
-        time.Sleep(1 * time.Second)
-    }
+		ew.logf("Elastic bulk attempt %d on %s failed with status %d in %s; retrying",
+			i+1, index, res.StatusCode, reqDur)
+		time.Sleep(1 * time.Second)
+	}
 
-    return errors.New("Cannot create/update document")
+	return errors.New("Cannot create/update document")
 }
-
 
 func (ew *ElasticLegacyWriter) CreateDoc(index string, data []byte, doc_id string) error {
 	var raw map[string]interface{}
 	for i := range 10 {
 		res, err := ew.Client.Index(index, bytes.NewReader(data), ew.Client.Index.WithDocumentID(doc_id))
 		if err != nil {
-		    return err
+			return err
 		}
 		defer res.Body.Close()
 
@@ -1038,13 +1030,12 @@ func (ew *ElasticLegacyWriter) CreateDoc(index string, data []byte, doc_id strin
 
 			if i >= 5 {
 				if err := json.NewDecoder(res.Body).Decode(&raw); err != nil {
-					return errors.New(fmt.Sprintf("Failure to to parse response body: %s", err))
+					return fmt.Errorf("Failure to to parse response body: %s", err)
 				} else {
-					return errors.New(fmt.Sprintf("Error: [%d] %s: %s",
+					return fmt.Errorf("Error: [%d] %s: %s",
 						res.StatusCode,
 						raw["error"].(map[string]interface{})["type"],
-						raw["error"].(map[string]interface{})["reason"],
-					))
+						raw["error"].(map[string]interface{})["reason"])
 				}
 
 			}
@@ -1058,16 +1049,16 @@ func (ew *ElasticLegacyWriter) CreateDoc(index string, data []byte, doc_id strin
 			}
 
 			//bodyBytes, err := io.ReadAll(res.Body)
-		    //if err != nil {
-		    //    return err
-		    //}
-		    //bodyString := string(bodyBytes)
+			//if err != nil {
+			//    return err
+			//}
+			//bodyString := string(bodyBytes)
 			//fmt.Printf("Resp: %s", bodyString)
 
 			var idxRes *legacyIndexResponse
-			
+
 			if err := json.NewDecoder(res.Body).Decode(&idxRes); err != nil {
-				return errors.New(fmt.Sprintf("Failure to to parse response body: %s", err))
+				return fmt.Errorf("Failure to to parse response body: %s", err)
 			} else {
 				//Debug result
 			}
@@ -1078,8 +1069,6 @@ func (ew *ElasticLegacyWriter) CreateDoc(index string, data []byte, doc_id strin
 
 	return errors.New("Cannot create/update document")
 }
-
-
 
 func (ew *ElasticLegacyWriter) MarshalAppend(marshalled []byte, new_data map[string]interface{}) ([]byte, error) {
 	t_data := make(map[string]interface{})
@@ -1093,11 +1082,11 @@ func (ew *ElasticLegacyWriter) MarshalAppend(marshalled []byte, new_data map[str
 		}
 
 		data[k] = v
-    }
+	}
 
-    for k, v := range new_data {
-    	data[k] = v
-    }
+	for k, v := range new_data {
+		data[k] = v
+	}
 
 	j_data, err := json.Marshal(data)
 	if err != nil {
@@ -1106,7 +1095,6 @@ func (ew *ElasticLegacyWriter) MarshalAppend(marshalled []byte, new_data map[str
 
 	return j_data, nil
 }
-
 
 func (ew *ElasticLegacyWriter) Marshal(v any) ([]byte, error) {
 	j, err := json.Marshal(v)
@@ -1125,7 +1113,7 @@ func (ew *ElasticLegacyWriter) Marshal(v any) ([]byte, error) {
 		}
 
 		data[k] = v
-    }
+	}
 
 	j_data, err := json.Marshal(data)
 	if err != nil {
