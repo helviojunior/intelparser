@@ -125,24 +125,24 @@ direction and target.`)),
 			writer, err = writers.NewDbWriter(convertCmdFlags.toDbUri, false)
 			if err != nil {
 				log.Error("could not get a database writer up", "err", err)
-				return
+				exitWith(2)
 			}
 		} else if convertCmdFlags.toExt == ".sqlite3" || convertCmdFlags.toExt == ".db" {
 			writer, err = writers.NewDbWriter(fmt.Sprintf("sqlite:///%s", convertCmdFlags.toFile), false)
 			if err != nil {
 				log.Error("could not get a database writer up", "err", err)
-				return
+				exitWith(2)
 			}
 		} else if convertCmdFlags.toExt == ".jsonl" {
 			toFile, err := tools.CreateFileWithDir(convertCmdFlags.toFile)
 			if err != nil {
 				log.Error("could not create target file", "err", err)
-				return
+				exitWith(2)
 			}
 			writer, err = writers.NewJsonWriter(toFile)
 			if err != nil {
 				log.Error("could not get a JSON writer up", "err", err)
-				return
+				exitWith(2)
 			}
 		}
 
@@ -155,6 +155,7 @@ direction and target.`)),
 			IsTerminal: term.IsTerminal(int(os.Stdin.Fd())),
 		}
 
+		stCode := 0
 		running = true
 		wg.Add(1)
 		go func() {
@@ -175,14 +176,17 @@ direction and target.`)),
 			if convertCmdFlags.fromDbUri != "" {
 				if err := convertFromDbTo(convertCmdFlags.fromDbUri, writer, status); err != nil {
 					log.Error("failed to convert from database", "err", err)
+					stCode = 2
 				}
 			} else if convertCmdFlags.fromExt == ".sqlite3" || convertCmdFlags.fromExt == ".db" {
 				if err := convertFromDbTo(fmt.Sprintf("sqlite:///%s", convertCmdFlags.fromFile), writer, status); err != nil {
 					log.Error("failed to convert to JSON Lines", "err", err)
+					stCode = 3
 				}
 			} else if convertCmdFlags.fromExt == ".jsonl" {
 				if err := convertFromJsonlTo(convertCmdFlags.fromFile, writer, status); err != nil {
 					log.Error("failed to convert to SQLite", "err", err)
+					stCode = 4
 				}
 			}
 
@@ -223,6 +227,8 @@ direction and target.`)),
 				log.Debug("failed deleting file", "file", convertCmdFlags.toFile, "err", err)
 			}
 		}
+
+		exitWith(stCode)
 
 	},
 }

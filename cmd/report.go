@@ -230,6 +230,20 @@ func clearScreen() {
 	ascii.ShowCursor()
 }
 
+// exitWith terminates the process with the given status code.
+//
+// The logger writes into an os.Pipe drained by a background goroutine (see
+// pkg/log), so a log call returns before anything reaches stdout. Execute()
+// accounts for that with a flush delay before returning, but os.Exit skips
+// it — without the pause here the summary, and any error line logged just
+// above, can be dropped entirely.
+func exitWith(code int) {
+	time.Sleep(time.Second / 4)
+	ascii.ShowCursor()
+	fmt.Printf("\n")
+	os.Exit(code)
+}
+
 func convertFromDbTo(fromUri string, writer writers.Writer, status *ConvStatus) error {
 	defer clearScreen()
 	ascii.HideCursor()

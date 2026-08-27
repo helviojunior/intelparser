@@ -97,14 +97,14 @@ A --from-file (or --from-db-uri) and --elasticsearch-uri must be specified.`)),
 			writer, err = writers.NewElasticLegacyWriter(elkCmdFlags.elasticURI, elkCmdFlags.elasticDebug)
 			if err != nil {
 				log.Error("could not get a elastic writer up", "err", err)
-				return
+				exitWith(2)
 			}
 		} else {
 			log.Info("Checking Elasticsearch indexes...")
 			writer, err = writers.NewElasticWriter(elkCmdFlags.elasticURI, elkCmdFlags.elasticDebug)
 			if err != nil {
 				log.Error("could not get a elastic writer up", "err", err)
-				return
+				exitWith(2)
 			}
 		}
 
@@ -117,6 +117,7 @@ A --from-file (or --from-db-uri) and --elasticsearch-uri must be specified.`)),
 			IsTerminal: term.IsTerminal(int(os.Stdin.Fd())),
 		}
 
+		stCode := 0
 		running = true
 		wg.Add(1)
 		go func() {
@@ -137,14 +138,17 @@ A --from-file (or --from-db-uri) and --elasticsearch-uri must be specified.`)),
 			if elkCmdFlags.fromDbUri != "" {
 				if err := convertFromDbTo(elkCmdFlags.fromDbUri, writer, status); err != nil {
 					log.Error("failed to convert from database", "err", err)
+					stCode = 2
 				}
 			} else if elkCmdFlags.fromExt == ".sqlite3" || elkCmdFlags.fromExt == ".db" {
 				if err := convertFromDbTo(fmt.Sprintf("sqlite:///%s", elkCmdFlags.fromFile), writer, status); err != nil {
 					log.Error("failed to convert from SQLite", "err", err)
+					stCode = 3
 				}
 			} else if elkCmdFlags.fromExt == ".jsonl" {
 				if err := convertFromJsonlTo(elkCmdFlags.fromFile, writer, status); err != nil {
 					log.Error("failed to convert from JSON Lines", "err", err)
+					stCode = 4
 				}
 			}
 			running = false
@@ -152,6 +156,11 @@ A --from-file (or --from-db-uri) and --elasticsearch-uri must be specified.`)),
 		}()
 
 		wg.Wait()
+
+		fmt.Fprintf(os.Stderr, "%s\n%s\r\033[A",
+			"                                                                                ",
+			"                                                                                ",
+		)
 
 		diff := time.Since(startTime)
 		out := time.Time{}.Add(diff)
@@ -170,6 +179,8 @@ A --from-file (or --from-db-uri) and --elasticsearch-uri must be specified.`)),
 			tools.FormatIntComma(status.Url),
 			tools.FormatIntComma(status.Email),
 		)
+
+		exitWith(stCode)
 
 	},
 }
