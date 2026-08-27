@@ -1146,7 +1146,7 @@ func (ew *ElasticWriter) CreateIndex(index string, mapping string) error {
 			if res.IsError() {
 
 				if err := json.NewDecoder(res.Body).Decode(&raw); err != nil {
-					return errors.New(fmt.Sprintf("Failure to to parse response body: %s", err))
+					return fmt.Errorf("Failure to to parse response body: %s", err)
 				} else {
 					errType, _ := raw["error"].(map[string]interface{})["type"].(string)
 					// A concurrent creation may have won the race; that is not a
@@ -1165,7 +1165,7 @@ func (ew *ElasticWriter) CreateIndex(index string, mapping string) error {
 		} else {
 
 			if err := json.NewDecoder(response.Body).Decode(&raw); err != nil {
-				return errors.New(fmt.Sprintf("Failure to to parse response body: %s", err))
+				return fmt.Errorf("Failure to to parse response body: %s", err)
 			} else {
 				return fmt.Errorf("Cannot get elastic index [%d] %s: %s",
 					response.StatusCode,

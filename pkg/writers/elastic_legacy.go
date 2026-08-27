@@ -976,7 +976,7 @@ func (ew *ElasticLegacyWriter) CreateDocBulk(index string, docs map[string][]byt
 		} else {
 			var blk *legacyBulkResponse
 			if err := json.NewDecoder(res.Body).Decode(&blk); err != nil {
-				return errors.New(fmt.Sprintf("Failure to to parse response body: %s", err))
+				return fmt.Errorf("Failure to to parse response body: %s", err)
 			} else {
 				// Count item-level errors and log a single aggregated line
 				// instead of spamming one log per failed doc.
