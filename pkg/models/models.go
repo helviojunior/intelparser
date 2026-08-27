@@ -27,7 +27,7 @@ type File struct {
 	Size		       	  uint   	`json:"size"`
 	ProviderId	    	  string   	`json:"provider_id"`
 	MIMEType    		  string    `json:"mime_type"`
-	Fingerprint	    	  string   	`json:"fingerprint";gorm:"unique;not null"`
+	Fingerprint	    	  string   	`json:"fingerprint" gorm:"unique;not null"`
 
 	Content 		  	  string 	`json:"content"`
 

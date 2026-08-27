@@ -43,9 +43,9 @@ type IntelligentSearchResponse struct {
 // Tag classifies the items data
 type Tag struct {
     ID    uint   `json:"id" gorm:"primarykey"`
-    ItemID   uint `json:"item_id";gorm:"uniqueIndex:idx_tag_class_v"`
-    Class int16  `json:"class";gorm:"uniqueIndex:idx_tag_class_v"` // Class of tag
-    Value string `json:"value";gorm:"uniqueIndex:idx_tag_class_v"` // The value
+    ItemID   uint `json:"item_id" gorm:"uniqueIndex:idx_tag_class_v"`
+    Class int16  `json:"class" gorm:"uniqueIndex:idx_tag_class_v"` // Class of tag
+    Value string `json:"value" gorm:"uniqueIndex:idx_tag_class_v"` // The value
 }
 
 func (Tag) TableName() string {
@@ -55,9 +55,9 @@ func (Tag) TableName() string {
 // Relationship defines a relation between 2 items.
 type Relationship struct {
     ID    uint   `json:"id" gorm:"primarykey"`
-    ItemID   uint `json:"item_id";gorm:"uniqueIndex:idx_relation_target_r"`
-    Target   string `json:"target";gorm:"uniqueIndex:idx_relation_target_r"`   // Target item systemid
-    Relation int    `json:"relation";gorm:"uniqueIndex:idx_relation_target_r"` // The relationship, see RelationX
+    ItemID   uint `json:"item_id" gorm:"uniqueIndex:idx_relation_target_r"`
+    Target   string `json:"target" gorm:"uniqueIndex:idx_relation_target_r"`   // Target item systemid
+    Relation int    `json:"relation" gorm:"uniqueIndex:idx_relation_target_r"` // The relationship, see RelationX
 }
 
 func (Relationship) TableName() string {
