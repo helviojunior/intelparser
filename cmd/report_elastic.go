@@ -156,7 +156,7 @@ A --from-file (or --from-db-uri) and --elasticsearch-uri must be specified.`)),
 
 		wg.Wait()
 
-		diff := time.Now().Sub(startTime)
+		diff := time.Since(startTime)
 		out := time.Time{}.Add(diff)
 
 		st := "Convertion status\n"
