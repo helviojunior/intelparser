@@ -3,15 +3,15 @@ package cmd
 import (
 	//"crypto/tls"
 	//"net/http"
-	"os/user"
-	"os"
 	"fmt"
-	"time"
+	"os"
 	"os/signal"
-    "syscall"
+	"os/user"
+	"syscall"
+	"time"
 
-	"github.com/helviojunior/intelparser/internal/tools"
 	"github.com/helviojunior/intelparser/internal/ascii"
+	"github.com/helviojunior/intelparser/internal/tools"
 	"github.com/helviojunior/intelparser/pkg/log"
 	"github.com/helviojunior/intelparser/pkg/runner"
 	"github.com/spf13/cobra"
@@ -28,16 +28,16 @@ var rootCmd = &cobra.Command{
 	Long:  ascii.Logo(),
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 
-        startTime = time.Now()
+		startTime = time.Now()
 
 		usr, err := user.Current()
-	    if err != nil {
-	       return err
-	    }
+		if err != nil {
+			return err
+		}
 
-	    opts.Writer.UserPath = usr.HomeDir
+		opts.Writer.UserPath = usr.HomeDir
 
-	    if cmd.CalledAs() != "version" && !opts.Logging.Silence {
+		if cmd.CalledAs() != "version" && !opts.Logging.Silence {
 			fmt.Println(ascii.Logo())
 		}
 
@@ -52,16 +52,16 @@ var rootCmd = &cobra.Command{
 
 		if opts.Logging.TextFile != "" {
 			// check if the destination exists, if not, create it
-		    dst, err := tools.CreateFileWithDir(opts.Logging.TextFile)
-		    if err != nil {
-		        return err
-		    }
-		    opts.Logging.TextFile = dst
+			dst, err := tools.CreateFileWithDir(opts.Logging.TextFile)
+			if err != nil {
+				return err
+			}
+			opts.Logging.TextFile = dst
 
 			err = log.SetOutFile(opts.Logging.TextFile)
 			if err != nil {
-		       return err
-		    }
+				return err
+			}
 		}
 
 		return nil
@@ -69,19 +69,23 @@ var rootCmd = &cobra.Command{
 }
 
 func Execute() {
-	c := make(chan os.Signal)
-    signal.Notify(c, os.Interrupt, syscall.SIGTERM)
-    go func() {
-        <-c
-        ascii.ClearLine()
-        fmt.Fprintf(os.Stderr, "\r\n")
-        ascii.ClearLine()
-        ascii.ShowCursor()
-        log.Warn("interrupted, shutting down...                            ")
-        ascii.ClearLine()
-        fmt.Printf("\n")
-        os.Exit(2)
-    }()
+	// Buffered (size 1): signal.Notify sends non-blocking, so an unbuffered
+	// channel silently drops a signal that arrives before the goroutine below
+	// reaches its receive. Since Notify also disables the default handler,
+	// a dropped SIGINT would make Ctrl+C do nothing at all.
+	c := make(chan os.Signal, 1)
+	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-c
+		ascii.ClearLine()
+		fmt.Fprintf(os.Stderr, "\r\n")
+		ascii.ClearLine()
+		ascii.ShowCursor()
+		log.Warn("interrupted, shutting down...                            ")
+		ascii.ClearLine()
+		fmt.Printf("\n")
+		os.Exit(2)
+	}()
 
 	rootCmd.CompletionOptions.DisableDefaultCmd = true
 	rootCmd.SilenceErrors = true
@@ -108,9 +112,9 @@ func Execute() {
 	}
 
 	//Time to wait the logger flush
-	time.Sleep(time.Second/4)
-    ascii.ShowCursor()
-    fmt.Printf("\n")
+	time.Sleep(time.Second / 4)
+	ascii.ShowCursor()
+	fmt.Printf("\n")
 }
 
 func init() {
@@ -121,5 +125,5 @@ func init() {
 	rootCmd.PersistentFlags().BoolVarP(&opts.Logging.Silence, "quiet", "q", false, "Silence (almost all) logging")
 
 	rootCmd.PersistentFlags().StringVarP(&opts.Logging.TextFile, "write-text-file", "o", "", "The file to write Text lines to")
-	
+
 }
