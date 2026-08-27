@@ -47,6 +47,20 @@ var elkReplicas = -1 // -1 means "do not change"
 // which matters a lot for these keyword/text-heavy leak indices.
 var elkCodec = "best_compression"
 
+// Per-index primary shard counts. Like index.codec, number_of_shards is a
+// static setting — settable only at creation, never patched on an open index —
+// so getting it wrong means a _split, _shrink or full _reindex later. Each
+// family gets its own knob because they differ by orders of magnitude: _ctrl
+// holds one document per file while _creds can reach tens of GB. Default 1;
+// raise a family only once its shards approach the 10-50GB band.
+var elkCtrlShards = 1
+var elkCredsShards = 1
+var elkUrlsShards = 1
+var elkEmailsShards = 1
+var elkPhoneShards = 1
+var elkDocsShards = 1
+var elkRefsShards = 1
+
 // queueItem wraps a File with the timestamp it was enqueued at, so workers
 // can measure queue-wait time (producer-to-consumer latency).
 type queueItem struct {
@@ -319,10 +333,18 @@ func NewElasticWriter(uri string, debug bool) (*ElasticWriter, error) {
 		elkCodec = v1
 	}
 
+	shardsFromEnv("ELK_CTRL_SHARDS", &elkCtrlShards)
+	shardsFromEnv("ELK_CREDS_SHARDS", &elkCredsShards)
+	shardsFromEnv("ELK_URLS_SHARDS", &elkUrlsShards)
+	shardsFromEnv("ELK_EMAILS_SHARDS", &elkEmailsShards)
+	shardsFromEnv("ELK_PHONE_SHARDS", &elkPhoneShards)
+	shardsFromEnv("ELK_DOCS_SHARDS", &elkDocsShards)
+	shardsFromEnv("ELK_REFS_SHARDS", &elkRefsShards)
+
 	// File/control index (global, single): file metadata only. The document _id
 	// is the file fingerprint, so the fingerprint is no longer stored as a
 	// field. Named <index>_ctrl so the bare <index> name stays free.
-	err = wr.CreateIndex(wr.Index+"_ctrl", buildIndexBody(`{
+	err = wr.CreateIndex(wr.Index+"_ctrl", buildIndexBody(elkCtrlShards, `{
                     "indexed_at": {"type": "date"},
                     "leak_date": {"type": "date"},
                     "name": {"type": "keyword"},
@@ -347,7 +369,7 @@ func NewElasticWriter(uri string, debug bool) (*ElasticWriter, error) {
 	// content hash (models.LeakIndexable.LeakID), which globally dedups the leak.
 
 	//Credential Index
-	err = wr.CreateIndex(wr.Index+"_creds", buildIndexBody(`{
+	err = wr.CreateIndex(wr.Index+"_creds", buildIndexBody(elkCredsShards, `{
                     "inserted_at": {"type": "date"},
                     "last_reference_at": {"type": "date"},
                     "rule": {"type": "keyword"},
@@ -365,7 +387,7 @@ func NewElasticWriter(uri string, debug bool) (*ElasticWriter, error) {
 	}
 
 	//Urls Index
-	err = wr.CreateIndex(wr.Index+"_urls", buildIndexBody(`{
+	err = wr.CreateIndex(wr.Index+"_urls", buildIndexBody(elkUrlsShards, `{
                     "inserted_at": {"type": "date"},
                     "last_reference_at": {"type": "date"},
                     "domain": {"type": "keyword"},
@@ -376,7 +398,7 @@ func NewElasticWriter(uri string, debug bool) (*ElasticWriter, error) {
 	}
 
 	//Emails Index
-	err = wr.CreateIndex(wr.Index+"_emails", buildIndexBody(`{
+	err = wr.CreateIndex(wr.Index+"_emails", buildIndexBody(elkEmailsShards, `{
                     "inserted_at": {"type": "date"},
                     "last_reference_at": {"type": "date"},
                     "domain": {"type": "keyword"},
@@ -387,7 +409,7 @@ func NewElasticWriter(uri string, debug bool) (*ElasticWriter, error) {
 	}
 
 	//Phone Index
-	err = wr.CreateIndex(wr.Index+"_phone", buildIndexBody(`{
+	err = wr.CreateIndex(wr.Index+"_phone", buildIndexBody(elkPhoneShards, `{
                     "inserted_at": {"type": "date"},
                     "last_reference_at": {"type": "date"},
                     "country": {"type": "keyword"},
@@ -399,7 +421,7 @@ func NewElasticWriter(uri string, debug bool) (*ElasticWriter, error) {
 	}
 
 	//Document Index (CPF / CNPJ)
-	err = wr.CreateIndex(wr.Index+"_document", buildIndexBody(`{
+	err = wr.CreateIndex(wr.Index+"_document", buildIndexBody(elkDocsShards, `{
                     "inserted_at": {"type": "date"},
                     "last_reference_at": {"type": "date"},
                     "raw": {"type": "text"},
@@ -443,10 +465,13 @@ func NewElasticWriter(uri string, debug bool) (*ElasticWriter, error) {
 // open index — so unlike refresh_interval / translog.durability / replicas
 // (handled live by applyIngestSettings) it MUST live in the create body. New
 // indices are therefore born with best_compression (or whatever ELK_CODEC sets),
-// avoiding a later reindex/force_merge just to reclaim disk.
-func buildIndexBody(properties string) string {
+// avoiding a later reindex/force_merge just to reclaim disk. number_of_shards
+// is static for the same reason, and is passed in per index family rather than
+// fixed here — see the elk*Shards vars.
+func buildIndexBody(shards int, properties string) string {
 	return fmt.Sprintf(`{
             "settings": {
+                "number_of_shards": %d,
                 "number_of_replicas": 1,
                 "index": {
                     "highlight.max_analyzed_offset": 10000000,
@@ -456,7 +481,25 @@ func buildIndexBody(properties string) string {
             "mappings": {
                 "properties": %s
             }
-        }`, elkCodec, properties)
+        }`, shards, elkCodec, properties)
+}
+
+// shardsFromEnv applies a per-index number_of_shards override from the
+// environment. A missing, non-numeric or out-of-range value leaves the default
+// untouched and warns instead of failing: a typo here would otherwise be
+// baked into an index that can only be resharded by reindexing it.
+func shardsFromEnv(envName string, target *int) {
+	v1, ok := os.LookupEnv(envName)
+	if !ok {
+		return
+	}
+	i1, err := strconv.ParseInt(v1, 10, 32)
+	if err != nil || i1 < 1 || i1 > 1024 {
+		logger.Warnf("Ignoring env.%s=%q: number_of_shards must be an integer between 1 and 1024", envName, v1)
+		return
+	}
+	logger.Infof("Setting ELK number_of_shards to %d using env.%s", i1, envName)
+	*target = int(i1)
 }
 
 // applyIngestSettings tunes an index for bulk ingestion throughput.
@@ -523,7 +566,7 @@ func (ew *ElasticWriter) ensureRefIndex(index string) error {
 		return nil
 	}
 
-	err := ew.CreateIndex(index, buildIndexBody(`{
+	err := ew.CreateIndex(index, buildIndexBody(elkRefsShards, `{
                     "indexed_at": {"type": "date"},
                     "file_id": {"type": "keyword"},
                     "leak_id": {"type": "keyword"},
