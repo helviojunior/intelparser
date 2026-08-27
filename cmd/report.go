@@ -2,367 +2,397 @@ package cmd
 
 import (
 	"bufio"
-    "encoding/json"
-    "fmt"
-    "io"
-    "os"
-    "strings"
-    "regexp"
-    "strconv"
-    "sync"
-    "time"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"regexp"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
 
-    "github.com/helviojunior/intelparser/internal/ascii"
-    "github.com/helviojunior/intelparser/pkg/database"
-    "github.com/helviojunior/intelparser/pkg/log"
-    "github.com/helviojunior/intelparser/pkg/models"
-    "github.com/helviojunior/intelparser/pkg/writers"
-    "github.com/spf13/cobra"
+	resolver "github.com/helviojunior/gopathresolver"
+	"github.com/helviojunior/intelparser/internal/ascii"
+	"github.com/helviojunior/intelparser/internal/tools"
+	"github.com/helviojunior/intelparser/pkg/database"
+	"github.com/helviojunior/intelparser/pkg/log"
+	"github.com/helviojunior/intelparser/pkg/models"
+	"github.com/helviojunior/intelparser/pkg/readers"
+	"github.com/helviojunior/intelparser/pkg/writers"
+	"github.com/spf13/cobra"
 )
 
 type ConvStatus struct {
-    Converted int
-    Url int
-    Email int
-    Credential int
-    Spin string
-    IsTerminal bool
+	Converted  int
+	Url        int
+	Email      int
+	Credential int
+	Spin       string
+	IsTerminal bool
 }
 
 var dateFilter = ""
 var indexedDateFilter = ""
 var rptFilter = ""
+var rptFilterFile = ""
 var filterList = []string{}
 var reportCmd = &cobra.Command{
-    Use:   "report",
-    Short: "Work with intelparser reports",
-    Long: ascii.LogoHelp(ascii.Markdown(`
+	Use:   "report",
+	Short: "Work with intelparser reports",
+	Long: ascii.LogoHelp(ascii.Markdown(`
 # report
 
 Work with intelparser reports.
 `)),
-    PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-        var err error
+	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		var err error
 
-        // Annoying quirk, but because I'm overriding PersistentPreRun
-        // here which overrides the parent it seems.
-        // So we need to explicitly call the parent's one now.
-        if err = rootCmd.PersistentPreRunE(cmd, args); err != nil {
-            return err
-        }
+		// Annoying quirk, but because I'm overriding PersistentPreRun
+		// here which overrides the parent it seems.
+		// So we need to explicitly call the parent's one now.
+		if err = rootCmd.PersistentPreRunE(cmd, args); err != nil {
+			return err
+		}
 
-        re := regexp.MustCompile("[^a-zA-Z0-9@-_.]")
-        s := strings.Split(rptFilter, ",")
-        for _, s1 := range s {
-            s2 := strings.ToLower(strings.Trim(s1, " "))
-            s2 = re.ReplaceAllString(s2, "")
-            if s2 != "" {
-                filterList = append(filterList, s2)
-            }
-        }
-        
-        if dateFilter != "" {
-            t, err := time.Parse("2006-01-02", dateFilter)
-            if err != nil {
-                return err
-            }
-            opts.DateFilter = &t
-        }
+		re := regexp.MustCompile("[^a-zA-Z0-9@-_.]")
+		s := strings.Split(rptFilter, ",")
+		for _, s1 := range s {
+			s2 := strings.ToLower(strings.Trim(s1, " "))
+			s2 = re.ReplaceAllString(s2, "")
+			if s2 != "" {
+				filterList = append(filterList, s2)
+			}
+		}
 
-        if opts.DateFilter != nil {
-            log.Warn("Date filter (start-date): " + opts.DateFilter.Format("2006-01-02"))
-        }
+		if rptFilterFile != "" {
+			if !tools.FileExists(rptFilterFile) {
+				return errors.New("Filter file is not readable")
+			}
 
-        if indexedDateFilter != "" {
-            t, err := time.Parse("2006-01-02", indexedDateFilter)
-            if err != nil {
-                return err
-            }
-            opts.IndexedDateFilter = &t
-        }
+			rptFilterFile, err = resolver.ResolveFullPath(rptFilterFile)
+			if err != nil {
+				return err
+			}
 
-        if opts.IndexedDateFilter != nil {
-            log.Warn("Indexed files date filter (start-date): " + opts.IndexedDateFilter.Format("2006-01-02"))
-        }
+			ft, err := tools.FileType(rptFilterFile)
+			if err != nil {
+				return err
+			}
 
-        if len(filterList) > 0 {
-            log.Warn("Filter list: " + strings.Join(filterList, ", "))
-        }
+			if ft != "file" {
+				return errors.New("Filter file must be file path")
+			}
 
-        return nil
-    },
+			if err = readers.ReadFileList(rptFilterFile, &filterList); err != nil {
+				return err
+			}
+		}
+
+		if dateFilter != "" {
+			t, err := time.Parse("2006-01-02", dateFilter)
+			if err != nil {
+				return err
+			}
+			opts.DateFilter = &t
+		}
+
+		if opts.DateFilter != nil {
+			log.Warn("Date filter (start-date): " + opts.DateFilter.Format("2006-01-02"))
+		}
+
+		if indexedDateFilter != "" {
+			t, err := time.Parse("2006-01-02", indexedDateFilter)
+			if err != nil {
+				return err
+			}
+			opts.IndexedDateFilter = &t
+		}
+
+		if opts.IndexedDateFilter != nil {
+			log.Warn("Indexed files date filter (start-date): " + opts.IndexedDateFilter.Format("2006-01-02"))
+		}
+
+		if len(filterList) > 0 {
+			log.Warn("Filter list: " + strings.Join(filterList, ", "))
+		}
+
+		return nil
+	},
 }
 
 func init() {
-    rootCmd.AddCommand(reportCmd)
+	rootCmd.AddCommand(reportCmd)
 
-    reportCmd.PersistentFlags().StringVar(&rptFilter, "filter", "", "Comma-separated terms to filter results")
-    reportCmd.PersistentFlags().StringVar(&dateFilter, "date-from", "", "Minimum date to convert. (Format: yyyy-mm-dd)")
-    reportCmd.PersistentFlags().StringVar(&indexedDateFilter, "indexed-date-from", "", "Minimum date to convert. (Format: yyyy-mm-dd)")
+	reportCmd.PersistentFlags().StringVarP(&rptFilter, "filter", "f", "", "Comma-separated terms to filter results")
+	reportCmd.PersistentFlags().StringVarP(&rptFilterFile, "filter-file", "F", "", "A path to text file with filter terms. One term per line")
+	reportCmd.PersistentFlags().StringVar(&dateFilter, "date-from", "", "Minimum date to convert. (Format: yyyy-mm-dd)")
+	reportCmd.PersistentFlags().StringVar(&indexedDateFilter, "indexed-date-from", "", "Minimum date to convert. (Format: yyyy-mm-dd)")
 }
 
-func (st *ConvStatus) Print() { 
-    if st.IsTerminal {
-        st.Spin = ascii.GetNextSpinner(st.Spin)
+func (st *ConvStatus) Print() {
+	if st.IsTerminal {
+		st.Spin = ascii.GetNextSpinner(st.Spin)
 
-        fmt.Fprintf(os.Stderr, "%s\n %s converted %d: cred: %d, url: %d, email: %d\r\033[A", 
-            "                                                                        ",
-            ascii.ColoredSpin(st.Spin), 
-            st.Converted, 
-            st.Credential, 
-            st.Url, 
-            st.Email)
+		fmt.Fprintf(os.Stderr, "%s\n %s converted %d: cred: %d, url: %d, email: %d\r\033[A",
+			"                                                                        ",
+			ascii.ColoredSpin(st.Spin),
+			st.Converted,
+			st.Credential,
+			st.Url,
+			st.Email)
 
-    }else{
-        log.Info("STATUS", 
-            "converted", st.Converted,
-            "creds", st.Credential, "url", st.Url, "email", st.Email)
-    }
-} 
+	} else {
+		log.Info("STATUS",
+			"converted", st.Converted,
+			"creds", st.Credential, "url", st.Url, "email", st.Email)
+	}
+}
 
 func containsFilterWord(s string) bool {
-    //If filter list is empty, always return true
-    if len(filterList) == 0 {
-        return true
-    }
+	//If filter list is empty, always return true
+	if len(filterList) == 0 {
+		return true
+	}
 
-    s = strings.ToLower(strings.Trim(s, " "))
-    if s == "" {
-        return false
-    }
-    for _, f := range filterList {
-        if strings.Contains(s, f) {
-            return true
-        }
-    }
-    return false
+	s = strings.ToLower(strings.Trim(s, " "))
+	if s == "" {
+		return false
+	}
+	for _, f := range filterList {
+		if strings.Contains(s, f) {
+			return true
+		}
+	}
+	return false
 }
 
 func getFilteredOnly(file models.File) *models.File {
-    nf := file.Clone()
+	nf := file.Clone()
 
-    for _, c := range file.Credentials {
-        if containsFilterWord(c.Username) || containsFilterWord(c.Url) || containsFilterWord(c.Password) {
-            nf.Credentials = append(nf.Credentials, c)
-        }
-    }
+	for _, c := range file.Credentials {
+		if containsFilterWord(c.Username) || containsFilterWord(c.Url) || containsFilterWord(c.Password) {
+			nf.Credentials = append(nf.Credentials, c)
+		}
+	}
 
-    for _, eml := range file.Emails {
-        if containsFilterWord(eml.Email) {
-            nf.Emails = append(nf.Emails, eml)
-        }
-    }
+	for _, eml := range file.Emails {
+		if containsFilterWord(eml.Email) {
+			nf.Emails = append(nf.Emails, eml)
+		}
+	}
 
-    for _, u := range file.URLs {
-        if containsFilterWord(u.Url) {
-            nf.URLs = append(nf.URLs, u)
-        }
-    }
+	for _, u := range file.URLs {
+		if containsFilterWord(u.Url) {
+			nf.URLs = append(nf.URLs, u)
+		}
+	}
 
-    for _, p := range file.Phones {
-        if containsFilterWord(p.Phone) || containsFilterWord(p.Raw) || containsFilterWord(p.NearText) {
-            nf.Phones = append(nf.Phones, p)
-        }
-    }
+	for _, p := range file.Phones {
+		if containsFilterWord(p.Phone) || containsFilterWord(p.Raw) || containsFilterWord(p.NearText) {
+			nf.Phones = append(nf.Phones, p)
+		}
+	}
 
-    for _, dc := range file.Documents {
-        if containsFilterWord(dc.Number) || containsFilterWord(dc.Raw) || containsFilterWord(dc.NearText) {
-            nf.Documents = append(nf.Documents, dc)
-        }
-    }
+	for _, dc := range file.Documents {
+		if containsFilterWord(dc.Number) || containsFilterWord(dc.Raw) || containsFilterWord(dc.NearText) {
+			nf.Documents = append(nf.Documents, dc)
+		}
+	}
 
-    if !containsFilterWord(nf.Content) && len(nf.Credentials) == 0 && len(nf.Emails) == 0 &&
-        len(nf.URLs) == 0 && len(nf.Phones) == 0 && len(nf.Documents) == 0 {
-        return nil
-    }
+	if !containsFilterWord(nf.Content) && len(nf.Credentials) == 0 && len(nf.Emails) == 0 &&
+		len(nf.URLs) == 0 && len(nf.Phones) == 0 && len(nf.Documents) == 0 {
+		return nil
+	}
 
-    return nf
+	return nf
 }
 
 func prepareSQL(fields []string) string {
-    sql := ""
-    for _, f := range fields {
-        for _, w := range filterList {
-            if sql != "" {
-                sql += " or "
-            }
-            sql += " " + f + " like '%"+ w + "%' "
-        }
-    }
-    if sql != "" {
-        sql = " and (" + sql + ")"
-    }
-    return sql
+	sql := ""
+	for _, f := range fields {
+		for _, w := range filterList {
+			if sql != "" {
+				sql += " or "
+			}
+			sql += " " + f + " like '%" + w + "%' "
+		}
+	}
+	if sql != "" {
+		sql = " and (" + sql + ")"
+	}
+	return sql
 }
 
-func clearScreen(){
-    ascii.ClearLine()
-    ascii.ShowCursor()
+func clearScreen() {
+	ascii.ClearLine()
+	ascii.ShowCursor()
 }
 
 func convertFromDbTo(fromUri string, writer writers.Writer, status *ConvStatus) error {
-    defer clearScreen()
-    ascii.HideCursor()
+	defer clearScreen()
+	ascii.HideCursor()
 
 	log.Info("starting conversion...")
-    conn, err := database.Connection(fromUri, true, false)
-    if err != nil {
-        return err
-    }
+	conn, err := database.Connection(fromUri, true, false)
+	if err != nil {
+		return err
+	}
 
-    //if err := conn.Model(&models.File{}).Preload(clause.Associations).Find(&results).Error; err != nil {
-    //    return err
-    //}
+	//if err := conn.Model(&models.File{}).Preload(clause.Associations).Find(&results).Error; err != nil {
+	//    return err
+	//}
 
-    sql_files := "id >= 0 "
-    if opts.IndexedDateFilter != nil {
-        sql_files += " AND indexed_at >= '" + opts.IndexedDateFilter.Format("2006-01-02") + "' "
-    }
+	sql_files := "id >= 0 "
+	if opts.IndexedDateFilter != nil {
+		sql_files += " AND indexed_at >= '" + opts.IndexedDateFilter.Format("2006-01-02") + "' "
+	}
 
-    rows, err := conn.Model(&models.File{}).Where(sql_files).Rows()
-    if err != nil {
-        return err
-    }
-    defer rows.Close()
-    wg := sync.WaitGroup{}
+	rows, err := conn.Model(&models.File{}).Where(sql_files).Rows()
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	wg := sync.WaitGroup{}
 
-    var file models.File
-    for rows.Next() {
-        conn.ScanRows(rows, &file)
+	var file models.File
+	for rows.Next() {
+		conn.ScanRows(rows, &file)
 
-        logger := log.With("id", file.ID, "file", file.FileName)
+		logger := log.With("id", file.ID, "file", file.FileName)
 
-        sql1 := "file_id = " + strconv.FormatUint(uint64(file.ID), 10)
-        if opts.DateFilter != nil {
-            sql1 += " AND time >= '" + opts.DateFilter.Format("2006-01-02") + "' "
-        }
+		sql1 := "file_id = " + strconv.FormatUint(uint64(file.ID), 10)
+		if opts.DateFilter != nil {
+			sql1 += " AND time >= '" + opts.DateFilter.Format("2006-01-02") + "' "
+		}
 
-        sqlCred := sql1 + prepareSQL([]string{"username", "url", "password"})
-        rCred, err := conn.Model(&models.Credential{}).Where(sqlCred).Rows()
-        if err != nil {
-            return err
-        }
-        defer rCred.Close()
+		sqlCred := sql1 + prepareSQL([]string{"username", "url", "password"})
+		rCred, err := conn.Model(&models.Credential{}).Where(sqlCred).Rows()
+		if err != nil {
+			return err
+		}
+		defer rCred.Close()
 
-        sqlEmail := sql1 + prepareSQL([]string{"email"})
-        rEml, err := conn.Model(&models.Email{}).Where(sqlEmail).Rows()
-        if err != nil {
-            return err
-        }
-        defer rEml.Close()
+		sqlEmail := sql1 + prepareSQL([]string{"email"})
+		rEml, err := conn.Model(&models.Email{}).Where(sqlEmail).Rows()
+		if err != nil {
+			return err
+		}
+		defer rEml.Close()
 
-        sqlUrl := sql1 + prepareSQL([]string{"url"})
-        rUrl, err := conn.Model(&models.URL{}).Where(sqlUrl).Rows()
-        if err != nil {
-            return err
-        }
-        defer rUrl.Close()
+		sqlUrl := sql1 + prepareSQL([]string{"url"})
+		rUrl, err := conn.Model(&models.URL{}).Where(sqlUrl).Rows()
+		if err != nil {
+			return err
+		}
+		defer rUrl.Close()
 
-        newResult := file.Clone()
+		newResult := file.Clone()
 
-        wg.Add(1)
-        go func() {
-            defer wg.Done()
-            logger.Debug("Checking credentials...")
-            var c models.Credential
-            for rCred.Next() {
-                conn.ScanRows(rCred, &c)
-                if containsFilterWord(c.UserDomain) || containsFilterWord(c.Url) || containsFilterWord(c.NearText) {
-                    newResult.Credentials = append(newResult.Credentials, c)
-                    status.Credential++
-                }
-            }
-        }()
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			logger.Debug("Checking credentials...")
+			var c models.Credential
+			for rCred.Next() {
+				conn.ScanRows(rCred, &c)
+				if containsFilterWord(c.UserDomain) || containsFilterWord(c.Url) || containsFilterWord(c.NearText) {
+					newResult.Credentials = append(newResult.Credentials, c)
+					status.Credential++
+				}
+			}
+		}()
 
-        wg.Add(1)
-        go func() {
-            defer wg.Done()
-            logger.Debug("Checking emails...")
-            var eml models.Email
-            for rEml.Next() {
-                conn.ScanRows(rEml, &eml)
-                if containsFilterWord(eml.Email) || containsFilterWord(eml.NearText) {
-                    newResult.Emails = append(newResult.Emails, eml)
-                    status.Email++
-                }
-            }
-        }()
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			logger.Debug("Checking emails...")
+			var eml models.Email
+			for rEml.Next() {
+				conn.ScanRows(rEml, &eml)
+				if containsFilterWord(eml.Email) || containsFilterWord(eml.NearText) {
+					newResult.Emails = append(newResult.Emails, eml)
+					status.Email++
+				}
+			}
+		}()
 
-        wg.Add(1)
-        go func() {
-            defer wg.Done()
-            logger.Debug("Checking urls...")
-            var u models.URL
-            for rUrl.Next() {
-                conn.ScanRows(rUrl, &u)
-                if containsFilterWord(u.Url) || containsFilterWord(u.NearText) {
-                    newResult.URLs = append(newResult.URLs, u)
-                    status.Url++
-                }
-            }
-        }()
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			logger.Debug("Checking urls...")
+			var u models.URL
+			for rUrl.Next() {
+				conn.ScanRows(rUrl, &u)
+				if containsFilterWord(u.Url) || containsFilterWord(u.NearText) {
+					newResult.URLs = append(newResult.URLs, u)
+					status.Url++
+				}
+			}
+		}()
 
-        wg.Wait()
+		wg.Wait()
 
-        if containsFilterWord(newResult.Content) || len(newResult.Credentials) != 0 || len(newResult.Emails) != 0 || len(newResult.URLs) != 0 {
-            logger.Debug("Converting file!")
-            status.Converted++
-            if err := writer.Write(newResult); err != nil {
-                return err
-            }
-        }
-    }
+		if containsFilterWord(newResult.Content) || len(newResult.Credentials) != 0 || len(newResult.Emails) != 0 || len(newResult.URLs) != 0 {
+			logger.Debug("Converting file!")
+			status.Converted++
+			if err := writer.Write(newResult); err != nil {
+				return err
+			}
+		}
+	}
 
-    return nil
+	return nil
 }
 
 func convertFromJsonlTo(from string, writer writers.Writer, status *ConvStatus) error {
-    defer clearScreen()
-    ascii.HideCursor()
+	defer clearScreen()
+	ascii.HideCursor()
 
 	log.Info("starting conversion...")
 
-    file, err := os.Open(from)
-    if err != nil {
-        return err
-    }
-    defer file.Close()
+	file, err := os.Open(from)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
 
-    reader := bufio.NewReader(file)
-    for {
-        line, err := reader.ReadBytes('\n')
-        if err != nil {
-            if err == io.EOF {
-                if len(line) == 0 {
-                    break // End of file
-                }
-                // Handle the last line without '\n'
-            } else {
-                return err
-            }
-        }
+	reader := bufio.NewReader(file)
+	for {
+		line, err := reader.ReadBytes('\n')
+		if err != nil {
+			if err == io.EOF {
+				if len(line) == 0 {
+					break // End of file
+				}
+				// Handle the last line without '\n'
+			} else {
+				return err
+			}
+		}
 
-        var result models.File
-        if err := json.Unmarshal(line, &result); err != nil {
-            log.Error("could not unmarshal JSON line", "err", err)
-            continue
-        }
+		var result models.File
+		if err := json.Unmarshal(line, &result); err != nil {
+			log.Error("could not unmarshal JSON line", "err", err)
+			continue
+		}
 
-        newResult := getFilteredOnly(result)
-        if newResult != nil {
-            if err := writer.Write(newResult); err != nil {
-                return err
-            }
-            status.Converted++
-            status.Url += len(newResult.URLs)
-            status.Email += len(newResult.Emails)
-            status.Credential += len(newResult.Credentials)
-        }
+		newResult := getFilteredOnly(result)
+		if newResult != nil {
+			if err := writer.Write(newResult); err != nil {
+				return err
+			}
+			status.Converted++
+			status.Url += len(newResult.URLs)
+			status.Email += len(newResult.Emails)
+			status.Credential += len(newResult.Credentials)
+		}
 
-        if err == io.EOF {
-            break
-        }
-    }
+		if err == io.EOF {
+			break
+		}
+	}
 
-    return nil
+	return nil
 }
