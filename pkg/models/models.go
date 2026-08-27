@@ -9,6 +9,8 @@ import (
     "encoding/hex"
 
 	"github.com/helviojunior/intelparser/internal/tools"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 //Name,Date,Bucket,Media,Content Type,Size,System ID
@@ -169,6 +171,24 @@ type Finding struct {
     Document Document
 }
 
+
+// BeforeCreate targets the upsert at the fingerprint instead of the primary
+// key. The connection-level OnConflict set by DbWriter has no Columns, so gorm
+// resolves it to ON CONFLICT ("id") — which never fires for a new row and lets
+// the insert hit uni_files_fingerprint instead. The fingerprint is the real
+// identity of a file here (the Elasticsearch writer uses it as the document
+// _id), so a re-import of the same content must update the existing row.
+//
+// Declared on the model rather than on the connection so the cascaded inserts
+// into credentials/urls/emails/phones/documents keep their own conflict target;
+// those tables have no fingerprint column.
+func (file *File) BeforeCreate(tx *gorm.DB) (err error) {
+	tx.Statement.AddClause(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "fingerprint"}},
+		UpdateAll: true,
+	})
+	return nil
+}
 
 func (file File) Clone() *File {
 	return &File{
