@@ -37,7 +37,23 @@ var elkWorkers = 4
 var elkQueueSize = 1024
 var elkRefreshInterval = "30s"
 var elkTranslogDurability = "async"
-var elkReplicas = -1 // -1 means "do not change"
+
+// elkReplicas is the replica count new indices are CREATED with (ELK_REPLICAS).
+// Default 0: a replica shard is never allocated on the same node as its
+// primary, so on a single-node cluster it would sit UNASSIGNED forever and pin
+// health at yellow. Set ELK_REPLICAS=1 (or higher) on a multi-node cluster.
+//
+// It deliberately does not reach indices that already exist — see
+// elkReplicasUpdate.
+var elkReplicas = 0
+
+// elkReplicasUpdate is what applyIngestSettings writes to number_of_replicas on
+// an index that already exists. -1 means "do not change", and nothing sets it:
+// the replica count of a live index is an operational decision that may have
+// been made outside this tool, and silently resetting it on every import would
+// be a destructive side effect of a routine run. ELK_REPLICAS is a
+// creation-time choice only.
+var elkReplicasUpdate = -1
 
 // elkCodec is the Lucene store codec applied at index-creation time. It is a
 // static setting (settable only on creation, never on an open index), so it
@@ -462,17 +478,21 @@ func NewElasticWriter(uri string, debug bool) (*ElasticWriter, error) {
 // string, braces included) with the standard creation-time settings shared by
 // every managed index. The store codec is injected here on purpose: index.codec
 // is a static setting that can only be set at creation time, never patched on an
-// open index — so unlike refresh_interval / translog.durability / replicas
-// (handled live by applyIngestSettings) it MUST live in the create body. New
-// indices are therefore born with best_compression (or whatever ELK_CODEC sets),
-// avoiding a later reindex/force_merge just to reclaim disk. number_of_shards
-// is static for the same reason, and is passed in per index family rather than
-// fixed here — see the elk*Shards vars.
+// open index — so unlike refresh_interval / translog.durability (handled live by
+// applyIngestSettings) it MUST live in the create body. New indices are
+// therefore born with best_compression (or whatever ELK_CODEC sets), avoiding a
+// later reindex/force_merge just to reclaim disk. number_of_shards is static for
+// the same reason, and is passed in per index family rather than fixed here —
+// see the elk*Shards vars.
+//
+// number_of_replicas is the odd one out: it is dynamic, but is set here as well
+// so a new index is born with the right count instead of being created at the
+// cluster default and corrected a moment later by applyIngestSettings.
 func buildIndexBody(shards int, properties string) string {
 	return fmt.Sprintf(`{
             "settings": {
                 "number_of_shards": %d,
-                "number_of_replicas": 0,
+                "number_of_replicas": %d,
                 "index": {
                     "highlight.max_analyzed_offset": 10000000,
                     "codec": %q
@@ -481,7 +501,7 @@ func buildIndexBody(shards int, properties string) string {
             "mappings": {
                 "properties": %s
             }
-        }`, shards, elkCodec, properties)
+        }`, shards, elkReplicas, elkCodec, properties)
 }
 
 // shardsFromEnv applies a per-index number_of_shards override from the
@@ -502,22 +522,26 @@ func shardsFromEnv(envName string, target *int) {
 	*target = int(i1)
 }
 
+// ingestSettingsBody builds the dynamic settings patch applied to every managed
+// index. number_of_replicas is included only when elkReplicasUpdate opts in;
+// see that var for why a routine import must not rewrite it.
+func ingestSettingsBody() map[string]interface{} {
+	idx := map[string]interface{}{
+		"refresh_interval": elkRefreshInterval,
+		"translog": map[string]interface{}{
+			"durability": elkTranslogDurability,
+		},
+	}
+	if elkReplicasUpdate >= 0 {
+		idx["number_of_replicas"] = elkReplicasUpdate
+	}
+	return map[string]interface{}{"index": idx}
+}
+
 // applyIngestSettings tunes an index for bulk ingestion throughput.
 // Applied once on writer init so it also updates existing indices.
 func (ew *ElasticWriter) applyIngestSettings(index string) error {
-	body := map[string]interface{}{
-		"index": map[string]interface{}{
-			"refresh_interval": elkRefreshInterval,
-			"translog": map[string]interface{}{
-				"durability": elkTranslogDurability,
-			},
-		},
-	}
-	if elkReplicas >= 0 {
-		body["index"].(map[string]interface{})["number_of_replicas"] = elkReplicas
-	}
-
-	b, err := json.Marshal(body)
+	b, err := json.Marshal(ingestSettingsBody())
 	if err != nil {
 		return err
 	}
