@@ -175,17 +175,14 @@ direction and target.`)),
 			if convertCmdFlags.fromDbUri != "" {
 				if err := convertFromDbTo(convertCmdFlags.fromDbUri, writer, status); err != nil {
 					log.Error("failed to convert from database", "err", err)
-					return
 				}
 			} else if convertCmdFlags.fromExt == ".sqlite3" || convertCmdFlags.fromExt == ".db" {
 				if err := convertFromDbTo(fmt.Sprintf("sqlite:///%s", convertCmdFlags.fromFile), writer, status); err != nil {
 					log.Error("failed to convert to JSON Lines", "err", err)
-					return
 				}
 			} else if convertCmdFlags.fromExt == ".jsonl" {
 				if err := convertFromJsonlTo(convertCmdFlags.fromFile, writer, status); err != nil {
 					log.Error("failed to convert to SQLite", "err", err)
-					return
 				}
 			}
 

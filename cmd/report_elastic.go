@@ -137,17 +137,14 @@ A --from-file (or --from-db-uri) and --elasticsearch-uri must be specified.`)),
 			if elkCmdFlags.fromDbUri != "" {
 				if err := convertFromDbTo(elkCmdFlags.fromDbUri, writer, status); err != nil {
 					log.Error("failed to convert from database", "err", err)
-					return
 				}
 			} else if elkCmdFlags.fromExt == ".sqlite3" || elkCmdFlags.fromExt == ".db" {
 				if err := convertFromDbTo(fmt.Sprintf("sqlite:///%s", elkCmdFlags.fromFile), writer, status); err != nil {
 					log.Error("failed to convert from SQLite", "err", err)
-					return
 				}
 			} else if elkCmdFlags.fromExt == ".jsonl" {
 				if err := convertFromJsonlTo(elkCmdFlags.fromFile, writer, status); err != nil {
 					log.Error("failed to convert from JSON Lines", "err", err)
-					return
 				}
 			}
 			running = false
