@@ -11,6 +11,7 @@ import (
     "time"
 
     "github.com/helviojunior/intelparser/internal/ascii"
+    "github.com/helviojunior/intelparser/internal/tools"
     "github.com/helviojunior/intelparser/pkg/log"
     "github.com/helviojunior/intelparser/pkg/models"
     "github.com/helviojunior/intelparser/pkg/writers"
@@ -22,6 +23,7 @@ var migrateElkFlags = struct {
     srcIndex   string
     elasticURI string
     debug      bool
+    limit      int
 }{}
 
 var migrateElkCmd = &cobra.Command{
@@ -41,13 +43,22 @@ model in place on the same cluster:
 The source (--source-index) and destination (--elasticsearch-uri index) base
 names must differ, since the old and new leak indices share suffixes. Files are
 replayed in chronological order (by indexed_at) through the normal writer, so
-inserted_at / last_reference_at reconstruct correctly.`)),
+inserted_at / last_reference_at reconstruct correctly.
+
+The source is read the way elasticdump does it: a _count request first, so
+progress is reported against a known total, then fixed-size pages of --limit
+documents (default 500). Raise --limit to trade memory and heap pressure on the
+source cluster for fewer round-trips.`)),
     Example: ascii.Markdown(`
    - intelparser report migrate-elastic --source-index intelparser --elasticsearch-uri http://localhost:9200/intelparser_v2
-   - intelparser report migrate-elastic --source-index testes --elasticsearch-uri http://user:pass@host:9200/testes_v2`),
+   - intelparser report migrate-elastic --source-index testes --elasticsearch-uri http://user:pass@host:9200/testes_v2
+   - intelparser report migrate-elastic --source-index intelparser --elasticsearch-uri http://localhost:9200/intelparser_v2 --limit 2000`),
     PreRunE: func(cmd *cobra.Command, args []string) error {
         if migrateElkFlags.srcIndex == "" {
             return errors.New("--source-index is required")
+        }
+        if migrateElkFlags.limit < 1 || migrateElkFlags.limit > 10000 {
+            return errors.New("--limit must be between 1 and 10000")
         }
         return nil
     },
@@ -74,7 +85,7 @@ inserted_at / last_reference_at reconstruct correctly.`)),
             return
         }
 
-        if err := migrateElastic(writer, migrateElkFlags.srcIndex); err != nil {
+        if err := migrateElastic(writer, migrateElkFlags.srcIndex, migrateElkFlags.limit); err != nil {
             log.Error("migration failed", "err", err)
             // still flush what was written so far
         }
@@ -92,6 +103,7 @@ func init() {
     migrateElkCmd.Flags().StringVar(&migrateElkFlags.srcIndex, "source-index", "", "The OLD-model index base name to read from (same cluster), e.g. 'intelparser'")
     migrateElkCmd.Flags().StringVar(&migrateElkFlags.elasticURI, "elasticsearch-uri", "http://localhost:9200/intelparser_v2", "Destination Elasticsearch URI (new-model index base). Must differ from --source-index.")
     migrateElkCmd.Flags().BoolVar(&migrateElkFlags.debug, "write-elasticsearch-enable-debug", false, "Enable ElasticSearch writer debug logging")
+    migrateElkCmd.Flags().IntVar(&migrateElkFlags.limit, "limit", 500, "How many documents to pull per search request (1-10000)")
 }
 
 // oldFileDoc maps the fields stored by the old-model file index. The old
@@ -113,24 +125,44 @@ type oldFileDoc struct {
 
 // migrateElastic reads the old-model dataset under srcIndex and replays every
 // file (with its leaks) through the new writer in chronological order.
-func migrateElastic(writer *writers.ElasticWriter, srcIndex string) error {
+//
+// The scan follows the elasticdump shape: a _count request first, so progress
+// can be reported against a known total from the very first page instead of
+// only after the last one, then fixed-size pages of `limit` documents.
+func migrateElastic(writer *writers.ElasticWriter, srcIndex string, limit int) error {
     client := writer.Client
+
+    total, err := countDocs(client, srcIndex)
+    if err != nil {
+        return fmt.Errorf("counting source file index %q: %w", srcIndex, err)
+    }
+    if total == 0 {
+        return fmt.Errorf("no documents found in source file index %q", srcIndex)
+    }
+    log.Infof("Source file index %q holds %s documents; reading %s per request",
+        srcIndex, tools.FormatInt64Comma(total), tools.FormatIntComma(limit))
 
     type fileMeta struct {
         id  string
         doc *oldFileDoc
     }
 
-    var files []fileMeta
-    // List the files without their (potentially large) content so the whole set
-    // fits comfortably in memory; content is fetched one file at a time below.
-    listBody := `{"_source":{"excludes":["content"]},"query":{"match_all":{}}}`
-    err := scrollAll(client, srcIndex, listBody, func(id string, src json.RawMessage) error {
+    files := make([]fileMeta, 0, total)
+    // Same request body as elasticdump's scan — match_all sorted by _doc, which
+    // is the cheapest possible order because it follows Lucene's own document
+    // order and skips scoring entirely. content is the one field left out: the
+    // listing is held in memory to be sorted chronologically, and file bodies
+    // would not fit; it is fetched per file in buildFileWithLeaks instead.
+    listBody := `{"query":{"match_all":{}},"stored_fields":[],"_source":{"excludes":["content"]},"sort":["_doc"]}`
+    err = scrollAll(client, srcIndex, listBody, limit, func(id string, src json.RawMessage) error {
         var o oldFileDoc
         if err := json.Unmarshal(src, &o); err != nil {
             return err
         }
         files = append(files, fileMeta{id: id, doc: &o})
+        if len(files)%(limit*10) == 0 {
+            log.Infof("Read %s/%s file documents", tools.FormatIntComma(len(files)), tools.FormatInt64Comma(total))
+        }
         return nil
     })
     if err != nil {
@@ -139,6 +171,13 @@ func migrateElastic(writer *writers.ElasticWriter, srcIndex string) error {
     if len(files) == 0 {
         return fmt.Errorf("no documents found in source file index %q", srcIndex)
     }
+    if int64(len(files)) != total {
+        // Not fatal: the count is a point-in-time snapshot and the index may be
+        // written to concurrently. Worth surfacing so a silent shortfall is not
+        // mistaken for a complete migration.
+        log.Warnf("Read %d file documents but _count reported %d; the source index may be changing during the migration",
+            len(files), total)
+    }
 
     // Chronological order so the FIFO single-worker replay yields correct
     // inserted_at / last_reference_at.
@@ -146,11 +185,11 @@ func migrateElastic(writer *writers.ElasticWriter, srcIndex string) error {
         return files[i].doc.IndexedAt.Before(files[j].doc.IndexedAt)
     })
 
-    log.Infof("Migrating %d files from %q to %q (chronological replay, single worker)",
-        len(files), srcIndex, writer.Index)
+    log.Infof("Migrating %s files from %q to %q (chronological replay, single worker)",
+        tools.FormatIntComma(len(files)), srcIndex, writer.Index)
 
     for i, fm := range files {
-        file, err := buildFileWithLeaks(client, srcIndex, fm.id, fm.doc)
+        file, err := buildFileWithLeaks(client, srcIndex, fm.id, fm.doc, limit)
         if err != nil {
             return fmt.Errorf("building file %s (%s): %w", fm.id, fm.doc.FileName, err)
         }
@@ -158,7 +197,8 @@ func migrateElastic(writer *writers.ElasticWriter, srcIndex string) error {
             return err
         }
         if (i+1)%25 == 0 {
-            log.Infof("Queued %d/%d files for migration", i+1, len(files))
+            log.Infof("Queued %s/%s files for migration",
+                tools.FormatIntComma(i+1), tools.FormatIntComma(len(files)))
         }
     }
     return nil
@@ -166,7 +206,7 @@ func migrateElastic(writer *writers.ElasticWriter, srcIndex string) error {
 
 // buildFileWithLeaks reconstructs a models.File (metadata + content) and pulls
 // every leak that references it out of the old per-type leak indices.
-func buildFileWithLeaks(client *elk.Client, srcIndex, fileID string, o *oldFileDoc) (*models.File, error) {
+func buildFileWithLeaks(client *elk.Client, srcIndex, fileID string, o *oldFileDoc, limit int) (*models.File, error) {
     content, err := getFileContent(client, srcIndex, fileID)
     if err != nil {
         return nil, err
@@ -188,9 +228,10 @@ func buildFileWithLeaks(client *elk.Client, srcIndex, fileID string, o *oldFileD
         Content:     content,
     }
 
-    q := fmt.Sprintf(`{"query":{"term":{"file_id":%s}}}`, jsonString(fileID))
+    // Same shape as the file scan: no stored fields, full _source, _doc order.
+    q := fmt.Sprintf(`{"query":{"term":{"file_id":%s}},"stored_fields":[],"_source":true,"sort":["_doc"]}`, jsonString(fileID))
 
-    if err := scrollAll(client, srcIndex+"_creds", q, func(_ string, src json.RawMessage) error {
+    if err := scrollAll(client, srcIndex+"_creds", q, limit, func(_ string, src json.RawMessage) error {
         var c models.Credential
         if err := decodeLeak(src, &c); err != nil {
             return err
@@ -201,7 +242,7 @@ func buildFileWithLeaks(client *elk.Client, srcIndex, fileID string, o *oldFileD
         return nil, err
     }
 
-    if err := scrollAll(client, srcIndex+"_urls", q, func(_ string, src json.RawMessage) error {
+    if err := scrollAll(client, srcIndex+"_urls", q, limit, func(_ string, src json.RawMessage) error {
         var u models.URL
         if err := decodeLeak(src, &u); err != nil {
             return err
@@ -212,7 +253,7 @@ func buildFileWithLeaks(client *elk.Client, srcIndex, fileID string, o *oldFileD
         return nil, err
     }
 
-    if err := scrollAll(client, srcIndex+"_emails", q, func(_ string, src json.RawMessage) error {
+    if err := scrollAll(client, srcIndex+"_emails", q, limit, func(_ string, src json.RawMessage) error {
         var e models.Email
         if err := decodeLeak(src, &e); err != nil {
             return err
@@ -223,7 +264,7 @@ func buildFileWithLeaks(client *elk.Client, srcIndex, fileID string, o *oldFileD
         return nil, err
     }
 
-    if err := scrollAll(client, srcIndex+"_phone", q, func(_ string, src json.RawMessage) error {
+    if err := scrollAll(client, srcIndex+"_phone", q, limit, func(_ string, src json.RawMessage) error {
         var p models.Phone
         if err := decodeLeak(src, &p); err != nil {
             return err
@@ -234,7 +275,7 @@ func buildFileWithLeaks(client *elk.Client, srcIndex, fileID string, o *oldFileD
         return nil, err
     }
 
-    if err := scrollAll(client, srcIndex+"_document", q, func(_ string, src json.RawMessage) error {
+    if err := scrollAll(client, srcIndex+"_document", q, limit, func(_ string, src json.RawMessage) error {
         var d models.Document
         if err := decodeLeak(src, &d); err != nil {
             return err
@@ -271,9 +312,9 @@ func decodeLeak(src json.RawMessage, v interface{}) error {
 
 // getFileContent fetches only the content field of a single old file document.
 func getFileContent(client *elk.Client, index, id string) (string, error) {
-    body := fmt.Sprintf(`{"size":1,"_source":{"includes":["content"]},"query":{"ids":{"values":[%s]}}}`, jsonString(id))
+    body := fmt.Sprintf(`{"_source":{"includes":["content"]},"query":{"ids":{"values":[%s]}}}`, jsonString(id))
     var content string
-    err := scrollAll(client, index, body, func(_ string, src json.RawMessage) error {
+    err := scrollAll(client, index, body, 1, func(_ string, src json.RawMessage) error {
         var o struct {
             Content string `json:"content"`
         }
@@ -296,16 +337,46 @@ type esScrollResp struct {
     } `json:"hits"`
 }
 
-// scrollAll runs a scrolled search over index and invokes fn for every hit.
-// A missing index (404) is treated as an empty result set (nothing to migrate
-// for that leak type), not an error.
-func scrollAll(client *elk.Client, index, body string, fn func(id string, src json.RawMessage) error) error {
+// countDocs returns how many documents index holds, mirroring the _count call
+// elasticdump issues before it starts dumping. A missing index (404) counts as
+// zero rather than an error, matching scrollAll.
+func countDocs(client *elk.Client, index string) (int64, error) {
+    res, err := client.Count(
+        client.Count.WithContext(context.Background()),
+        client.Count.WithIndex(index),
+        client.Count.WithBody(strings.NewReader(`{"query":{"match_all":{}}}`)),
+    )
+    if err != nil {
+        return 0, err
+    }
+    defer res.Body.Close()
+
+    if res.StatusCode == 404 {
+        return 0, nil
+    }
+    if res.IsError() {
+        return 0, fmt.Errorf("count on %s failed with status %d", index, res.StatusCode)
+    }
+
+    var out struct {
+        Count int64 `json:"count"`
+    }
+    if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
+        return 0, err
+    }
+    return out.Count, nil
+}
+
+// scrollAll runs a scrolled search over index and invokes fn for every hit,
+// pulling size documents per request. A missing index (404) is treated as an
+// empty result set (nothing to migrate for that leak type), not an error.
+func scrollAll(client *elk.Client, index, body string, size int, fn func(id string, src json.RawMessage) error) error {
     res, err := client.Search(
         client.Search.WithContext(context.Background()),
         client.Search.WithIndex(index),
         client.Search.WithBody(strings.NewReader(body)),
         client.Search.WithScroll(2*time.Minute),
-        client.Search.WithSize(1000),
+        client.Search.WithSize(size),
     )
     if err != nil {
         return err
