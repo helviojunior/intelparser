@@ -47,6 +47,13 @@ var elkTranslogDurability = "async"
 // from the outside costs far more than the line costs.
 var elkMetricsInterval = 15 * time.Second
 
+// elkPauseInterval is how long the writer waits before re-probing a cluster
+// that is refusing writes (ELK_PAUSE_INTERVAL, in seconds). The condition it
+// is built for -- a flood-stage disk watermark flipping an index to
+// read-only-allow-delete -- clears when an operator frees space or the cluster
+// finishes a merge, which is a human-scale wait, not a millisecond one.
+var elkPauseInterval = 30 * time.Second
+
 // elkReplicas is the replica count new indices are CREATED with (ELK_REPLICAS).
 // Default 0: a replica shard is never allocated on the same node as its
 // primary, so on a single-node cluster it would sit UNASSIGNED forever and pin
@@ -115,6 +122,67 @@ type pendingLeak struct {
 	last  string
 }
 
+// clusterGate holds every writer goroutine still while Elasticsearch is
+// refusing writes. One goroutine owns the pause and re-probes on an interval;
+// the rest park until it succeeds, so a cluster that is already struggling is
+// not hammered by sixteen workers rediscovering the same block.
+//
+// The zero value is an open gate.
+type clusterGate struct {
+	mu      sync.Mutex
+	resumed chan struct{} // non-nil while paused, closed on resume
+	since   time.Time
+	total   atomic.Int64 // ns spent paused across the run, for the metrics line
+}
+
+// wait blocks until the cluster is accepting writes again.
+func (g *clusterGate) wait() {
+	g.mu.Lock()
+	ch := g.resumed
+	g.mu.Unlock()
+	if ch != nil {
+		<-ch
+	}
+}
+
+// pause engages the gate and reports whether this caller is the one that
+// engaged it. Only that caller should probe.
+func (g *clusterGate) pause() bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.resumed != nil {
+		return false
+	}
+	g.resumed = make(chan struct{})
+	g.since = time.Now()
+	return true
+}
+
+// resume releases everyone waiting and returns how long the pause lasted.
+func (g *clusterGate) resume() time.Duration {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.resumed == nil {
+		return 0
+	}
+	close(g.resumed)
+	g.resumed = nil
+	d := time.Since(g.since)
+	g.total.Add(int64(d))
+	return d
+}
+
+// pausedFor reports how long the current pause has been running, or 0 when the
+// gate is open.
+func (g *clusterGate) pausedFor() time.Duration {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.resumed == nil {
+		return 0
+	}
+	return time.Since(g.since)
+}
+
 // queueItem wraps a File with the timestamp it was enqueued at, so workers
 // can measure queue-wait time (producer-to-consumer latency).
 type queueItem struct {
@@ -153,6 +221,9 @@ type ElasticWriter struct {
 	// import month), so the per-index threshold alone bounds memory only when
 	// multiplied by however many indices happen to be active. pendTotal caps
 	// the whole set.
+	// gate parks the writers while the cluster is refusing writes.
+	gate clusterGate
+
 	bulkMu      sync.Mutex
 	pendUpdates map[string]map[string]*pendingLeak
 	pendIndexes map[string]map[string][]byte
@@ -178,6 +249,7 @@ type ElasticWriter struct {
 	metFiles       atomic.Int64
 	metFileTimeNs  atomic.Int64 // sum of writeSync durations
 	metQueueWaitNs atomic.Int64 // sum of queue-wait durations
+	metDocErrs     atomic.Int64 // documents the cluster rejected permanently
 
 	// Last values reported by the periodic metrics snapshot, so an idle writer
 	// does not repeat an identical line every interval.
@@ -416,6 +488,13 @@ func NewElasticWriter(uri string, debug bool) (*ElasticWriter, error) {
 		if i1, err := strconv.ParseInt(v1, 10, 32); err == nil && i1 >= 0 {
 			logger.Infof("Setting ELK metrics interval to %ds using env.ELK_METRICS_INTERVAL", i1)
 			elkMetricsInterval = time.Duration(i1) * time.Second
+		}
+	}
+
+	if v1, ok := os.LookupEnv("ELK_PAUSE_INTERVAL"); ok {
+		if i1, err := strconv.ParseInt(v1, 10, 32); err == nil && i1 >= 1 {
+			logger.Infof("Setting ELK pause retry interval to %ds using env.ELK_PAUSE_INTERVAL", i1)
+			elkPauseInterval = time.Duration(i1) * time.Second
 		}
 	}
 
@@ -962,8 +1041,11 @@ func (ew *ElasticWriter) logMetrics(final bool) {
 	files := ew.metFiles.Load()
 
 	// An idle writer would otherwise repeat an identical line every interval;
-	// only report a periodic snapshot once a file or a bulk has landed.
-	if !final && files == ew.lastMetFiles.Load() && bulks == ew.lastMetBulks.Load() {
+	// only report a periodic snapshot once a file or a bulk has landed. A
+	// stalled cluster is the exception: nothing moves precisely because the
+	// writers are parked, which is the one moment the line matters most.
+	if !final && ew.gate.pausedFor() == 0 &&
+		files == ew.lastMetFiles.Load() && bulks == ew.lastMetBulks.Load() {
 		return
 	}
 	ew.lastMetFiles.Store(files)
@@ -977,6 +1059,8 @@ func (ew *ElasticWriter) logMetrics(final bool) {
 	qwait := ew.metQueueWaitNs.Load()
 	errs := ew.failures.Load()
 	retries := ew.metBulkRetries.Load()
+	docErrs := ew.metDocErrs.Load()
+	pausedTotal := time.Duration(ew.gate.total.Load()) + ew.gate.pausedFor()
 
 	elapsed := time.Since(ew.startedAt).Seconds()
 	if elapsed < 0.001 {
@@ -1009,8 +1093,15 @@ func (ew *ElasticWriter) logMetrics(final bool) {
 		tag = "ELK final metrics"
 	}
 
-	emit("%s: queue=%d/%d files=%d (%.1f/s) bulks=%d docs=%d (%.0f/s) bytes=%s (%s/s) avg_bulk=%s max_bulk=%s avg_file=%s avg_queue_wait=%s retries=%d errs=%d",
-		tag,
+	// A run that spent time parked on a refusing cluster has a misleading
+	// docs/s unless the pause is visible next to it.
+	state := ""
+	if d := ew.gate.pausedFor(); d > 0 {
+		state = fmt.Sprintf(" PAUSED(%s)", d.Round(time.Second))
+	}
+
+	emit("%s:%s queue=%d/%d files=%d (%.1f/s) bulks=%d docs=%d (%.0f/s) bytes=%s (%s/s) avg_bulk=%s max_bulk=%s avg_file=%s avg_queue_wait=%s paused=%s retries=%d errs=%d doc_errs=%d",
+		tag, state,
 		qlen, qcap,
 		files, float64(files)/elapsed,
 		bulks,
@@ -1018,7 +1109,8 @@ func (ew *ElasticWriter) logMetrics(final bool) {
 		tools.Bytes(uint64(bytes)), tools.Bytes(uint64(float64(bytes)/elapsed)),
 		avgBulk, time.Duration(latMax),
 		avgFile, avgQWait,
-		retries, errs,
+		pausedTotal.Round(time.Second),
+		retries, errs, docErrs,
 	)
 }
 
@@ -1423,6 +1515,29 @@ func leakUpsertLine(p *pendingLeak) []byte {
 		elkLeakScriptJSON, jsonQuote(p.first), jsonQuote(p.last), seed))
 }
 
+// bulkLine is one document's contribution to a bulk request: the action
+// metadata and the body, already rendered as the two NDJSON lines they will be
+// sent as. Keeping them per document and in order is what lets a partially
+// failed bulk be retried with only the documents that failed -- Elasticsearch
+// returns the items in request order, so item i belongs to line i.
+type bulkLine struct {
+	id     string
+	ndjson []byte
+}
+
+// renderBulk concatenates lines into a bulk request payload.
+func renderBulk(lines []bulkLine) []byte {
+	size := 0
+	for _, l := range lines {
+		size += len(l.ndjson)
+	}
+	buf := make([]byte, 0, size)
+	for _, l := range lines {
+		buf = append(buf, l.ndjson...)
+	}
+	return buf
+}
+
 // sendLeakBulk ships a batch of deduplicated leak upserts to a leak index.
 // retry_on_conflict lets concurrent workers touching the same shared leak retry
 // instead of failing with a version conflict.
@@ -1430,16 +1545,17 @@ func (ew *ElasticWriter) sendLeakBulk(index string, docs map[string]*pendingLeak
 	if len(docs) == 0 {
 		return nil
 	}
-	var buf bytes.Buffer
+	lines := make([]bulkLine, 0, len(docs))
 	for id, p := range docs {
 		meta := fmt.Sprintf(`{ "update" : { "_id" : %s, "retry_on_conflict" : 5 } }%s`, jsonQuote(id), "\n")
-		line := leakUpsertLine(p)
-		buf.Grow(len(meta) + len(line) + 1)
-		buf.WriteString(meta)
-		buf.Write(line)
-		buf.WriteByte('\n')
+		body := leakUpsertLine(p)
+		nd := make([]byte, 0, len(meta)+len(body)+1)
+		nd = append(nd, meta...)
+		nd = append(nd, body...)
+		nd = append(nd, '\n')
+		lines = append(lines, bulkLine{id: id, ndjson: nd})
 	}
-	return ew.postBulk(index, "update", &buf, len(docs))
+	return ew.postBulk(index, "update", lines)
 }
 
 // sendBulk ships a batch of full source documents to `index`. The meta line is
@@ -1449,108 +1565,262 @@ func (ew *ElasticWriter) sendBulk(index string, action string, docs map[string][
 	if len(docs) == 0 {
 		return nil
 	}
-	var buf bytes.Buffer
+	lines := make([]bulkLine, 0, len(docs))
 	for id, doc := range docs {
 		meta := fmt.Sprintf(`{ %s : { "_id" : %s } }%s`, jsonQuote(action), jsonQuote(id), "\n")
-		buf.Grow(len(meta) + len(doc) + 1)
-		buf.WriteString(meta)
-		buf.Write(doc)
-		buf.WriteByte('\n')
+		nd := make([]byte, 0, len(meta)+len(doc)+1)
+		nd = append(nd, meta...)
+		nd = append(nd, doc...)
+		nd = append(nd, '\n')
+		lines = append(lines, bulkLine{id: id, ndjson: nd})
 	}
-	return ew.postBulk(index, action, &buf, len(docs))
+	return ew.postBulk(index, action, lines)
 }
 
-// postBulk performs the HTTP _bulk call (with retries) for an already-rendered
-// NDJSON payload and records the bulk-level metrics.
-func (ew *ElasticWriter) postBulk(index string, action string, buf *bytes.Buffer, count int) error {
-	var raw map[string]interface{}
-	size := buf.Len()
+// retriableBulkStatus reports whether a status code is back-pressure or a
+// transient unavailability rather than a verdict on the request itself.
+func retriableBulkStatus(status int) bool {
+	switch status {
+	case 408, 409, 429, 502, 503, 504:
+		return true
+	}
+	return false
+}
 
-	ew.logf("Elastic bulk start: %d docs (%s), %s -> %s", count, action, tools.Bytes(uint64(size)), index)
+// clusterRefusing reports whether a per-document failure means the cluster as
+// a whole cannot take writes right now -- a disk-watermark block, a rejected
+// execution, a tripped circuit breaker, a shard that is not available. These
+// are the failures worth parking every writer for, because every writer is
+// about to hit them too.
+func clusterRefusing(r bulkItemResult) bool {
+	switch r.Status {
+	case 429, 502, 503, 504:
+		return true
+	}
+	switch r.Error.Type {
+	case "cluster_block_exception", "es_rejected_execution_exception",
+		"circuit_breaking_exception", "unavailable_shards_exception",
+		"no_shard_available_action_exception":
+		return true
+	}
+	return false
+}
 
+// retriableBulkItem reports whether a per-document failure is worth waiting out
+// rather than dropping the document: anything the cluster is refusing, plus a
+// version conflict (408/409), which is local contention that a later attempt
+// merges correctly rather than a reason to park the whole pipeline. A mapping
+// error or a malformed document, by contrast, fails identically on every retry,
+// so retrying it forever would stall the run over a document that can never
+// land.
+func retriableBulkItem(r bulkItemResult) bool {
+	return retriableBulkStatus(r.Status) || clusterRefusing(r)
+}
+
+// postBulk performs the HTTP _bulk call for an already-rendered set of lines
+// and does not return until every one of them has either been written or
+// failed in a way that retrying cannot fix.
+//
+// A bulk request answering 200 does not mean the documents were written: the
+// per-item results carry their own status, and a cluster refusing writes (say,
+// a flood-stage disk watermark putting the index in read-only-allow-delete)
+// answers 200 with every single item failing 429. Treating that as success is
+// silent data loss, which is why failed items are collected and re-sent rather
+// than counted and logged.
+//
+// While the cluster is refusing writes there is no point in sixteen workers
+// discovering that independently, so the first one to see it holds the gate:
+// it alone re-probes on an interval, everyone else parks until it succeeds.
+// The queue backs up behind them and the readers block on it, so the whole
+// pipeline pauses in place, with nothing buffered being dropped.
+func (ew *ElasticWriter) postBulk(index string, action string, lines []bulkLine) error {
+	if len(lines) == 0 {
+		return nil
+	}
+
+	pending := lines
+	total := len(lines)
 	start := time.Now()
-	for i := range 10 {
 
-		reqStart := time.Now()
-		res, err := ew.Client.Bulk(bytes.NewReader(buf.Bytes()), ew.Client.Bulk.WithIndex(index))
-		if err != nil {
-			return err
+	// Set while this goroutine is the one probing a paused cluster; the defer
+	// makes sure the gate is released on every exit path, error included.
+	owner := false
+	defer func() {
+		if owner {
+			ew.gate.resume()
 		}
+	}()
+
+	logPaused := time.Time{}
+	hardFails := 0
+	softFails := 0
+	permTotal := 0
+
+	for attempt := 0; ; attempt++ {
+		if !owner {
+			// Non-owners park here for as long as the cluster is refusing
+			// writes; the owner must not, or it would wait on its own gate.
+			ew.gate.wait()
+		}
+
+		var (
+			retry       []bulkLine
+			reason      string
+			clusterWide bool
+			perm        int
+			permEx      string
+		)
+
+		payload := renderBulk(pending)
+		reqStart := time.Now()
+		res, err := ew.Client.Bulk(bytes.NewReader(payload), ew.Client.Bulk.WithIndex(index))
 		reqDur := time.Since(reqStart)
-		if i > 0 {
+		if attempt > 0 {
 			ew.metBulkRetries.Add(1)
 		}
 
-		status := res.StatusCode
-		isErr := res.IsError()
-
-		if isErr {
-
-			if i >= 5 {
-				decErr := json.NewDecoder(res.Body).Decode(&raw)
-				drainClose(res.Body)
-				if decErr != nil {
-					return fmt.Errorf("Failure to to parse response body: %s", decErr)
-				}
-				return fmt.Errorf("Error: [%d] %s: %s",
-					status,
-					raw["error"].(map[string]interface{})["type"],
-					raw["error"].(map[string]interface{})["reason"])
-
-			}
-			drainClose(res.Body)
-
-			// A successful response might still contain errors for particular documents...
-			//
+		if err != nil {
+			// The cluster is unreachable and the client has already exhausted
+			// its own retries. Returning here would drop the batch, so an
+			// unreachable cluster is treated exactly like a refusing one: hold
+			// the documents and wait for it to come back.
+			retry, clusterWide = pending, true
+			reason = fmt.Sprintf("%s is unreachable: %s", index, err)
 		} else {
-			var blk *bulkResponse
+			status := res.StatusCode
+			var blk bulkResponse
 			decErr := json.NewDecoder(res.Body).Decode(&blk)
 			drainClose(res.Body)
-			if decErr != nil {
-				return fmt.Errorf("Failure to to parse response body: %s", decErr)
-			}
-			// Count item-level errors and log a single aggregated line
-			// instead of spamming one log per failed doc.
-			itemErrs := 0
-			var firstErr string
-			for _, d := range blk.Items {
-				// The item is keyed by the action used; pick whichever the
-				// server populated (Status != 0).
-				r := d.Index
-				if r.Status == 0 {
-					r = d.Update
+
+			switch {
+			case status == 200 || status == 201:
+				// A response that does not account for every document sent
+				// cannot be trusted to say which ones landed. Re-sending is
+				// safe -- every id is deterministic, so a document written
+				// twice is written once -- while assuming success is not.
+				if decErr != nil || len(blk.Items) != len(pending) {
+					hardFails++
+					if hardFails >= 5 {
+						return fmt.Errorf("bulk on %s answered %d with %d results for %d documents (decode: %v)",
+							index, status, len(blk.Items), len(pending), decErr)
+					}
+					logger.Warnf("Elastic bulk %s: unreadable response (%d results for %d documents); re-sending",
+						index, len(blk.Items), len(pending))
+					time.Sleep(time.Duration(hardFails) * time.Second)
+					continue
 				}
-				if r.Status > 201 {
-					itemErrs++
-					if firstErr == "" {
-						firstErr = fmt.Sprintf("[%d] %s: %s",
-							r.Status, r.Error.Type, r.Error.Reason)
+
+				for i, d := range blk.Items {
+					// The item is keyed by the action used; pick whichever the
+					// server populated (Status != 0).
+					r := d.Index
+					if r.Status == 0 {
+						r = d.Update
+					}
+					if r.Status <= 201 {
+						continue
+					}
+					if retriableBulkItem(r) {
+						retry = append(retry, pending[i])
+						if clusterRefusing(r) {
+							clusterWide = true
+						}
+						if reason == "" {
+							reason = fmt.Sprintf("%s: [%d] %s: %s", index, r.Status, r.Error.Type, r.Error.Reason)
+						}
+					} else {
+						perm++
+						if permEx == "" {
+							permEx = fmt.Sprintf("[%d] %s: %s", r.Status, r.Error.Type, r.Error.Reason)
+						}
 					}
 				}
-			}
-			if itemErrs > 0 {
-				logger.Warnf("Elastic bulk %s: %d/%d items failed (first: %s)",
-					index, itemErrs, len(blk.Items), firstErr)
+
+				if perm > 0 {
+					// Nothing a retry can do for these; report them loudly and
+					// let the rest of the batch through rather than stalling
+					// the whole run on a document that can never land.
+					permTotal += perm
+					ew.metDocErrs.Add(int64(perm))
+					logger.Errorf("Elastic bulk %s: %d document(s) rejected permanently and dropped (first: %s)",
+						index, perm, permEx)
+				}
+
+				if wrote := len(pending) - len(retry) - perm; wrote > 0 {
+					ew.recordBulk(wrote, len(payload), reqDur)
+				}
+
+				if len(retry) == 0 {
+					if owner {
+						ew.resumeCluster()
+						owner = false
+					}
+					ew.logf("Elastic bulk OK %s: %d/%d docs, %s in %s (req=%s)",
+						index, total-permTotal, total, tools.Bytes(uint64(len(payload))), time.Since(start), reqDur)
+					return nil
+				}
+
+			case retriableBulkStatus(status):
+				retry, clusterWide = pending, status != 409
+				reason = fmt.Sprintf("%s: the whole bulk was refused with status %d", index, status)
+
+			default:
+				// A verdict on the request itself (a malformed payload, a 4xx
+				// that is not back-pressure). Re-sending the same bytes will
+				// not change it, but give it a few goes in case it is transient.
+				hardFails++
+				if hardFails >= 5 {
+					return fmt.Errorf("bulk on %s failed with status %d after %d attempts", index, status, hardFails)
+				}
+				ew.logf("Elastic bulk attempt %d on %s failed with status %d in %s; retrying",
+					hardFails, index, status, reqDur)
+				time.Sleep(time.Duration(hardFails) * time.Second)
+				continue
 			}
 		}
 
-		if status == 200 || status == 201 {
-			total := time.Since(start)
-			bps := float64(size) / total.Seconds()
-			dps := float64(count) / total.Seconds()
-			ew.recordBulk(count, size, reqDur)
-			ew.logf("Elastic bulk OK %s: %d docs, %s in %s (req=%s, %.0f docs/s, %s/s)",
-				index, count, tools.Bytes(uint64(size)), total, reqDur,
-				dps, tools.Bytes(uint64(bps)))
-			return nil
+		// Something retriable is left. Local contention (a version conflict
+		// that outlived retry_on_conflict) is not a reason to park every other
+		// writer -- back off briefly and re-send just those documents. Only
+		// escalate to the shared pause when it will not clear on its own.
+		pending = retry
+		if !clusterWide {
+			softFails++
+			if softFails < 10 {
+				time.Sleep(time.Duration(min(softFails, 5)) * 200 * time.Millisecond)
+				continue
+			}
+			reason = fmt.Sprintf("%s: %d document(s) still conflicting after %d attempts",
+				index, len(pending), softFails)
 		}
 
-		ew.logf("Elastic bulk attempt %d on %s failed with status %d in %s; retrying",
-			i+1, index, status, reqDur)
-		time.Sleep(1 * time.Second)
+		if !owner {
+			owner = ew.gate.pause()
+			if !owner {
+				// Someone else owns the pause: loop back and park on the gate.
+				continue
+			}
+			logger.Warnf("Elastic is refusing writes (%s); pausing all writers and retrying every %s",
+				reason, elkPauseInterval)
+			logPaused = time.Now()
+		}
+
+		// Owner: wait out the interval, then re-probe with the held documents.
+		time.Sleep(elkPauseInterval)
+		if time.Since(logPaused) >= time.Minute {
+			logger.Warnf("Elastic still refusing writes after %s (%s); %d document(s) held, retrying",
+				ew.gate.pausedFor().Round(time.Second), reason, len(pending))
+			logPaused = time.Now()
+		}
 	}
+}
 
-	return errors.New("Cannot create/update document")
+// resumeCluster releases a pause this goroutine owned and reports how long the
+// whole pipeline was held.
+func (ew *ElasticWriter) resumeCluster() {
+	if d := ew.gate.resume(); d > 0 {
+		logger.Infof("Elastic accepted writes again after %s; resuming all writers", d.Round(time.Second))
+	}
 }
 
 // drainClose reads a response body to EOF before closing it. Go only returns a
