@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	elk "github.com/elastic/go-elasticsearch/v8"
 )
@@ -39,6 +40,8 @@ func (f *fakeES) handler() http.Handler {
 			size := 0
 			fmt.Sscanf(r.URL.Query().Get("size"), "%d", &size)
 			f.perPage = append(f.perPage, size)
+			// A fresh search restarts the result set; only scrolling continues it.
+			f.delivered = 0
 			f.writePage(w, size)
 
 		case r.URL.Path == "/_search/scroll":
@@ -60,7 +63,8 @@ func (f *fakeES) writePage(w http.ResponseWriter, size int) {
 		hits = append(hits, fmt.Sprintf(`{"_id":"id-%d","_source":{"file_name":"f-%d"}}`, f.delivered+i, f.delivered+i))
 	}
 	f.delivered += n
-	fmt.Fprintf(w, `{"_scroll_id":"s1","hits":{"hits":[%s]}}`, strings.Join(hits, ","))
+	fmt.Fprintf(w, `{"_scroll_id":"s1","hits":{"total":{"value":%d},"hits":[%s]}}`,
+		f.total, strings.Join(hits, ","))
 }
 
 func newFakeClient(t *testing.T, f *fakeES) (*elk.Client, func()) {
@@ -95,7 +99,7 @@ func TestScrollAllPagesAtLimit(t *testing.T) {
 	defer done()
 
 	seen := map[string]bool{}
-	body := `{"query":{"match_all":{}},"stored_fields":[],"_source":true,"sort":["_doc"]}`
+	body := `{"query":{"match_all":{}},"stored_fields":[],"_source":true,"sort":["_doc"],"track_total_hits":true}`
 	err := scrollAll(c, "src", body, limit, func(id string, src json.RawMessage) error {
 		if seen[id] {
 			t.Errorf("hit %s delivered twice", id)
@@ -143,5 +147,84 @@ func TestScrollAllMissingIndexIsEmpty(t *testing.T) {
 	}
 	if n != 0 {
 		t.Errorf("delivered %d hits from a missing index", n)
+	}
+}
+
+// A result set that fits in one page must cost exactly one request: no scroll
+// context, no trailing empty page, no clear.
+func TestSearchAllSinglePage(t *testing.T) {
+	f := &fakeES{total: 300}
+	c, done := newFakeClient(t, f)
+	defer done()
+
+	n := 0
+	body := `{"query":{"match_all":{}},"sort":["_doc"],"track_total_hits":true}`
+	if err := searchAll(c, "src", body, 500, func(string, json.RawMessage) error {
+		n++
+		return nil
+	}); err != nil {
+		t.Fatalf("searchAll: %v", err)
+	}
+	if n != 300 {
+		t.Errorf("delivered %d hits, want 300", n)
+	}
+	if len(f.perPage) != 1 {
+		t.Errorf("issued %d searches, want 1", len(f.perPage))
+	}
+}
+
+// A result set that overflows the page but still fits in the result window must
+// be re-fetched sized to the total rather than scrolled.
+func TestSearchAllRefetchesSizedToTotal(t *testing.T) {
+	f := &fakeES{total: 1250}
+	c, done := newFakeClient(t, f)
+	defer done()
+
+	seen := map[string]bool{}
+	body := `{"query":{"match_all":{}},"sort":["_doc"],"track_total_hits":true}`
+	if err := searchAll(c, "src", body, 500, func(id string, _ json.RawMessage) error {
+		if seen[id] {
+			t.Errorf("hit %s delivered twice", id)
+		}
+		seen[id] = true
+		return nil
+	}); err != nil {
+		t.Fatalf("searchAll: %v", err)
+	}
+	if len(seen) != 1250 {
+		t.Errorf("delivered %d hits, want 1250", len(seen))
+	}
+	if len(f.perPage) != 2 || f.perPage[1] != 1250 {
+		t.Errorf("searches sized %v, want [500 1250]", f.perPage)
+	}
+}
+
+// The progress line is the run's only sense of scale, so both of its modes have
+// to hold: leak-based when the source counts are known, files-only when not.
+func TestProgressLine(t *testing.T) {
+	// 1% of the leaks in 6 minutes projects to just under ten more hours.
+	got := progressLine(607, 33981, 12_400_000, 1_230_000_000, 6*time.Minute)
+	for _, want := range []string{"607/33.981 files", "12.400.000/1.230.000.000 leaks", "(1.0%)", "leaks/s", "ETA 9h"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("progress line missing %q:\n%s", want, got)
+		}
+	}
+
+	// Without source counts there is nothing to project from.
+	if got := progressLine(607, 33981, 0, 0, 6*time.Minute); got != "Queued 607/33.981 files for migration" {
+		t.Errorf("files-only line = %q", got)
+	}
+}
+
+func TestHumanDuration(t *testing.T) {
+	for d, want := range map[time.Duration]string{
+		30 * time.Second:               "<1m",
+		9*time.Minute + 40*time.Second: "10m",
+		9*time.Hour + 32*time.Minute:   "9h32m",
+		25*time.Hour + 5*time.Minute:   "25h05m",
+	} {
+		if got := humanDuration(d); got != want {
+			t.Errorf("humanDuration(%s) = %q, want %q", d, got, want)
+		}
 	}
 }
