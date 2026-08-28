@@ -38,6 +38,15 @@ var elkQueueSize = 1024
 var elkRefreshInterval = "30s"
 var elkTranslogDurability = "async"
 
+// elkMetricsInterval is how often the periodic "ELK metrics" snapshot is
+// emitted (ELK_METRICS_INTERVAL, in seconds; 0 disables it). The snapshot is
+// logged at Info rather than Debug: it is a single line per interval, and it is
+// the only thing that says, during a multi-hour import, whether the run is
+// bound by the source (queue empty), by the writer (queue full) or by the
+// cluster itself (docs/s flat while the queue stays full). Reconstructing that
+// from the outside costs far more than the line costs.
+var elkMetricsInterval = 15 * time.Second
+
 // elkReplicas is the replica count new indices are CREATED with (ELK_REPLICAS).
 // Default 0: a replica shard is never allocated on the same node as its
 // primary, so on a single-node cluster it would sit UNASSIGNED forever and pin
@@ -77,6 +86,35 @@ var elkPhoneShards = 1
 var elkDocsShards = 1
 var elkRefsShards = 1
 
+// elkLeakDateScript keeps a deduplicated leak's two dates correct no matter
+// what order the updates that touch it arrive in: inserted_at converges on the
+// EARLIEST timestamp ever seen for that leak and last_reference_at on the
+// LATEST one. Both are stored as RFC3339 UTC strings, which are fixed-width and
+// zero-suffixed, so lexicographic order is chronological order and a plain
+// String.compareTo is enough.
+//
+// Doing this server-side is what allows more than one writer worker: the older
+// formulation ("doc" always overwriting last_reference_at, "upsert" seeding
+// inserted_at only on first insertion) made both dates depend on write order,
+// so last_reference_at ended up being whichever file happened to be written
+// last rather than the most recent one, and a re-import of an older file would
+// rewind it.
+const elkLeakDateScript = `if (ctx._source.inserted_at == null || ctx._source.inserted_at.compareTo(params.first) > 0) { ctx._source.inserted_at = params.first } if (ctx._source.last_reference_at == null || ctx._source.last_reference_at.compareTo(params.last) < 0) { ctx._source.last_reference_at = params.last }`
+
+// elkLeakScriptJSON is elkLeakDateScript pre-quoted as a JSON string literal,
+// built once because it is embedded in every single leak update line.
+var elkLeakScriptJSON = jsonQuote(elkLeakDateScript)
+
+// pendingLeak is one deduplicated leak waiting in a bulk buffer. doc holds the
+// intrinsic fields already marshalled (dates excluded, since they are spliced
+// in at flush time); first/last are the running min/max of the timestamps of
+// every occurrence coalesced into this entry.
+type pendingLeak struct {
+	doc   []byte
+	first string
+	last  string
+}
+
 // queueItem wraps a File with the timestamp it was enqueued at, so workers
 // can measure queue-wait time (producer-to-consumer latency).
 type queueItem struct {
@@ -99,6 +137,28 @@ type ElasticWriter struct {
 	closed   atomic.Bool
 	failures atomic.Int64
 
+	// Pending bulk buffers, keyed by destination index. They deliberately span
+	// files: most files carry a handful of leaks, so flushing at every file
+	// boundary (as the writer used to) meant ELK_BULK_SIZE never applied and a
+	// small file cost up to eleven near-empty HTTP round-trips. Accumulating
+	// across files makes the configured bulk size real.
+	//
+	// pendUpdates holds leak upserts (bulk "update", merged on the leak _id --
+	// see pendingLeak); pendIndexes holds reference and file/_ctrl documents
+	// (bulk "index", last write wins on the _id, which is deterministic). The
+	// two never share an index name, so pendBytes tracks both.
+	//
+	// pendTotal is the sum of pendBytes. Buffers are per index and a run can
+	// touch several (the leak families, _ctrl, and one reference index per
+	// import month), so the per-index threshold alone bounds memory only when
+	// multiplied by however many indices happen to be active. pendTotal caps
+	// the whole set.
+	bulkMu      sync.Mutex
+	pendUpdates map[string]map[string]*pendingLeak
+	pendIndexes map[string]map[string][]byte
+	pendBytes   map[string]int
+	pendTotal   int
+
 	// refIndexes memoises which monthly reference indices (intelparser_ref_YYYY-MM)
 	// have already been created this run, so writeSync doesn't issue an Exists/Create
 	// round-trip for every file. Keyed by index name -> struct{}{}.
@@ -118,6 +178,11 @@ type ElasticWriter struct {
 	metFiles       atomic.Int64
 	metFileTimeNs  atomic.Int64 // sum of writeSync durations
 	metQueueWaitNs atomic.Int64 // sum of queue-wait durations
+
+	// Last values reported by the periodic metrics snapshot, so an idle writer
+	// does not repeat an identical line every interval.
+	lastMetFiles atomic.Int64
+	lastMetBulks atomic.Int64
 
 	startedAt    time.Time
 	stopReporter chan struct{}
@@ -225,8 +290,11 @@ func NewElasticWriter(uri string, debug bool) (*ElasticWriter, error) {
 	}
 
 	wr := &ElasticWriter{
-		Index: index_name,
-		debug: debug,
+		Index:       index_name,
+		debug:       debug,
+		pendUpdates: map[string]map[string]*pendingLeak{},
+		pendIndexes: map[string]map[string][]byte{},
+		pendBytes:   map[string]int{},
 	}
 
 	conf := elk.Config{
@@ -341,6 +409,13 @@ func NewElasticWriter(uri string, debug bool) (*ElasticWriter, error) {
 				logger.Infof("Setting ELK number_of_replicas to %d using env.ELK_REPLICAS", i1)
 				elkReplicas = int(i1)
 			}
+		}
+	}
+
+	if v1, ok := os.LookupEnv("ELK_METRICS_INTERVAL"); ok {
+		if i1, err := strconv.ParseInt(v1, 10, 32); err == nil && i1 >= 0 {
+			logger.Infof("Setting ELK metrics interval to %ds using env.ELK_METRICS_INTERVAL", i1)
+			elkMetricsInterval = time.Duration(i1) * time.Second
 		}
 	}
 
@@ -675,6 +750,13 @@ func (ew *ElasticWriter) Flush() error {
 	close(ew.queue)
 	ew.wg.Wait()
 
+	// Workers are done, so nothing can add to the bulk buffers any more: send
+	// whatever is still pending in them before reporting the run finished.
+	if err := ew.flushPending(); err != nil {
+		ew.failures.Add(1)
+		logger.Errorf("Elastic writer failure flushing pending bulks: %s", err)
+	}
+
 	// Stop the metrics reporter and emit a final summary.
 	close(ew.stopReporter)
 	ew.reporterWG.Wait()
@@ -684,6 +766,154 @@ func (ew *ElasticWriter) Flush() error {
 		logger.Warnf("ELK writer finished with %d failure(s)", n)
 	}
 	return nil
+}
+
+// queueLeak buffers one leak upsert for leakIndex, coalescing it with any
+// occurrence of the same leak already pending: the intrinsic document is
+// identical (the _id is its content hash), so only the date range widens. That
+// keeps the earliest inserted_at even though the buffer now spans files, and it
+// collapses repeats of a popular leak into a single update instead of several.
+//
+// The buffer is detached under the lock and sent outside it, so a flush never
+// blocks the other workers filling other indices.
+func (ew *ElasticWriter) queueLeak(leakIndex, leakID string, doc []byte, ts string) error {
+	ew.bulkMu.Lock()
+	m := ew.pendUpdates[leakIndex]
+	if m == nil {
+		m = map[string]*pendingLeak{}
+		ew.pendUpdates[leakIndex] = m
+	}
+	if p, ok := m[leakID]; ok {
+		if ts < p.first {
+			p.first = ts
+		}
+		if ts > p.last {
+			p.last = ts
+		}
+	} else {
+		m[leakID] = &pendingLeak{doc: doc, first: ts, last: ts}
+		// Rough per-line cost: the document plus the update envelope (action
+		// metadata, script reference, both dates). Only used to decide when to
+		// flush, so an estimate is enough.
+		n := len(doc) + len(leakID) + 220
+		ew.pendBytes[leakIndex] += n
+		ew.pendTotal += n
+	}
+	var detached map[string]*pendingLeak
+	if len(m) >= elkBulkCount || ew.pendBytes[leakIndex] >= elkBulkMaxSize {
+		detached = m
+		ew.pendTotal -= ew.pendBytes[leakIndex]
+		delete(ew.pendUpdates, leakIndex)
+		delete(ew.pendBytes, leakIndex)
+	}
+	spill := ew.overBudgetLocked()
+	ew.bulkMu.Unlock()
+
+	var firstErr error
+	if detached != nil {
+		firstErr = ew.sendLeakBulk(leakIndex, detached)
+	}
+	if err := ew.sendDetached(spill); err != nil && firstErr == nil {
+		firstErr = err
+	}
+	return firstErr
+}
+
+// queueDoc buffers one plain document (a reference doc, or a file document for
+// the _ctrl index) for a bulk "index" action. Ids are deterministic, so a
+// repeat inside the buffer is the same document and simply overwrites.
+func (ew *ElasticWriter) queueDoc(index, id string, doc []byte) error {
+	ew.bulkMu.Lock()
+	m := ew.pendIndexes[index]
+	if m == nil {
+		m = map[string][]byte{}
+		ew.pendIndexes[index] = m
+	}
+	n := len(doc) + len(id) + 48
+	if prev, ok := m[id]; ok {
+		// Undo the whole previous estimate, envelope included, or a replayed
+		// id inflates the budget every time it comes round again.
+		was := len(prev) + len(id) + 48
+		ew.pendBytes[index] -= was
+		ew.pendTotal -= was
+	}
+	m[id] = doc
+	ew.pendBytes[index] += n
+	ew.pendTotal += n
+	var detached map[string][]byte
+	if len(m) >= elkBulkCount || ew.pendBytes[index] >= elkBulkMaxSize {
+		detached = m
+		ew.pendTotal -= ew.pendBytes[index]
+		delete(ew.pendIndexes, index)
+		delete(ew.pendBytes, index)
+	}
+	spill := ew.overBudgetLocked()
+	ew.bulkMu.Unlock()
+
+	var firstErr error
+	if detached != nil {
+		firstErr = ew.sendBulk(index, "index", detached)
+	}
+	if err := ew.sendDetached(spill); err != nil && firstErr == nil {
+		firstErr = err
+	}
+	return firstErr
+}
+
+// pendingBatch is a detached set of buffers on its way out, so the sending
+// happens outside the lock.
+type pendingBatch struct {
+	updates map[string]map[string]*pendingLeak
+	indexes map[string]map[string][]byte
+}
+
+// overBudgetLocked detaches every buffer once the writer as a whole is holding
+// more than four bulks worth of pending documents. Must be called with bulkMu
+// held. Returns nil while the writer is within budget.
+func (ew *ElasticWriter) overBudgetLocked() *pendingBatch {
+	if ew.pendTotal < 4*elkBulkMaxSize {
+		return nil
+	}
+	b := &pendingBatch{updates: ew.pendUpdates, indexes: ew.pendIndexes}
+	ew.pendUpdates = map[string]map[string]*pendingLeak{}
+	ew.pendIndexes = map[string]map[string][]byte{}
+	ew.pendBytes = map[string]int{}
+	ew.pendTotal = 0
+	return b
+}
+
+// sendDetached ships a set of buffers detached by overBudgetLocked / flushPending.
+func (ew *ElasticWriter) sendDetached(b *pendingBatch) error {
+	if b == nil {
+		return nil
+	}
+	var firstErr error
+	for index, docs := range b.updates {
+		if err := ew.sendLeakBulk(index, docs); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	for index, docs := range b.indexes {
+		if err := ew.sendBulk(index, "index", docs); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
+// flushPending sends every buffered bulk. Called once by Flush after the
+// workers have drained, which is what makes the cross-file buffering safe: no
+// document can be left behind in a buffer at the end of a run.
+func (ew *ElasticWriter) flushPending() error {
+	ew.bulkMu.Lock()
+	b := &pendingBatch{updates: ew.pendUpdates, indexes: ew.pendIndexes}
+	ew.pendUpdates = map[string]map[string]*pendingLeak{}
+	ew.pendIndexes = map[string]map[string][]byte{}
+	ew.pendBytes = map[string]int{}
+	ew.pendTotal = 0
+	ew.bulkMu.Unlock()
+
+	return ew.sendDetached(b)
 }
 
 // recordBulk atomically updates bulk-level metrics. Called by sendBulk on
@@ -708,7 +938,11 @@ func (ew *ElasticWriter) recordBulk(docs int, size int, dur time.Duration) {
 // empty), on the writer side (queue full, high avg_bulk), or elsewhere.
 func (ew *ElasticWriter) metricsReporter() {
 	defer ew.reporterWG.Done()
-	ticker := time.NewTicker(15 * time.Second)
+	if elkMetricsInterval <= 0 {
+		<-ew.stopReporter
+		return
+	}
+	ticker := time.NewTicker(elkMetricsInterval)
 	defer ticker.Stop()
 	for {
 		select {
@@ -725,11 +959,20 @@ func (ew *ElasticWriter) metricsReporter() {
 // logs.
 func (ew *ElasticWriter) logMetrics(final bool) {
 	bulks := ew.metBulks.Load()
+	files := ew.metFiles.Load()
+
+	// An idle writer would otherwise repeat an identical line every interval;
+	// only report a periodic snapshot once a file or a bulk has landed.
+	if !final && files == ew.lastMetFiles.Load() && bulks == ew.lastMetBulks.Load() {
+		return
+	}
+	ew.lastMetFiles.Store(files)
+	ew.lastMetBulks.Store(bulks)
+
 	docs := ew.metDocs.Load()
 	bytes := ew.metBytes.Load()
 	latSum := ew.metLatencyNs.Load()
 	latMax := ew.metLatencyMax.Load()
-	files := ew.metFiles.Load()
 	ftime := ew.metFileTimeNs.Load()
 	qwait := ew.metQueueWaitNs.Load()
 	errs := ew.failures.Load()
@@ -755,14 +998,15 @@ func (ew *ElasticWriter) logMetrics(final bool) {
 		qcap = cap(ew.queue)
 	}
 
-	// The final summary is always emitted at Info level so end-of-run stats
-	// are visible regardless of the debug flag. Periodic snapshots follow the
-	// flag.
+	// Both the periodic snapshot and the final summary go out at Info: these
+	// counters are the only in-flight view of where a long import is spending
+	// its time, and hiding them behind --write-elasticsearch-enable-debug meant
+	// paying for per-bulk log spam to get them. Set ELK_METRICS_INTERVAL=0 to
+	// turn the periodic line off.
 	tag := "ELK metrics"
-	emit := ew.logf
+	emit := logger.Infof
 	if final {
 		tag = "ELK final metrics"
-		emit = logger.Infof
 	}
 
 	emit("%s: queue=%d/%d files=%d (%.1f/s) bulks=%d docs=%d (%.0f/s) bytes=%s (%s/s) avg_bulk=%s max_bulk=%s avg_file=%s avg_queue_wait=%s retries=%d errs=%d",
@@ -955,69 +1199,38 @@ func refID(fileID, leakID string) string {
 	return hash
 }
 
-// ingestLeaks handles one leak type for one file. For every leak it emits:
+// ingestLeaks handles one leak type for one file. For every leak it queues:
 //
-//   - a leak-index upsert (bulk "update" action) keyed by the content hash:
-//     on first sight it inserts the intrinsic value with inserted_at =
-//     last_reference_at = the import time; on a repeat it only bumps
-//     last_reference_at, preserving the original inserted_at. retry_on_conflict
-//     (set in sendBulk) absorbs the version conflicts that concurrent workers
-//     upserting the same shared leak would otherwise raise.
-//   - a reference-index document (bulk "index" action) keyed by refID, holding
-//     the file<->leak pointer plus the occurrence context.
+//   - a leak-index upsert (bulk "update") keyed by the content hash. The first
+//     sighting inserts the intrinsic value with inserted_at =
+//     last_reference_at = the file's import time; later sightings run
+//     elkLeakDateScript, which widens that range instead of overwriting it, so
+//     the result no longer depends on the order the updates are applied in.
+//     retry_on_conflict (set in sendLeakBulk) absorbs the version conflicts
+//     concurrent workers upserting the same shared leak would raise.
+//   - a reference-index document (bulk "index") keyed by refID, holding the
+//     file<->leak pointer plus the occurrence context.
 //
-// Leak and reference docs are flushed independently as they hit elkBulkCount /
-// elkBulkMaxSize.
+// Nothing is flushed here: both go into the writer-wide buffers, which span
+// files and flush on elkBulkCount / elkBulkMaxSize (see queueLeak / queueDoc).
 func ingestLeaks[T models.LeakIndexable](ew *ElasticWriter, leakIndex, refIndex,
 	fileID, bucket string, indexedAt time.Time, items []T) error {
 
+	if len(items) == 0 {
+		return nil
+	}
 	nowStr := indexedAt.UTC().Format(time.RFC3339)
-
-	leakDocs := make(map[string][]byte)
-	leakLen := 0
-	refDocs := make(map[string][]byte)
-	refLen := 0
-
-	flushLeaks := func() error {
-		if len(leakDocs) == 0 {
-			return nil
-		}
-		if err := ew.sendBulk(leakIndex, "update", leakDocs); err != nil {
-			return err
-		}
-		leakDocs = make(map[string][]byte)
-		leakLen = 0
-		return nil
-	}
-	flushRefs := func() error {
-		if len(refDocs) == 0 {
-			return nil
-		}
-		if err := ew.sendBulk(refIndex, "index", refDocs); err != nil {
-			return err
-		}
-		refDocs = make(map[string][]byte)
-		refLen = 0
-		return nil
-	}
 
 	for _, it := range items {
 		leakID := it.LeakID()
 
-		// Leak upsert: doc bumps only last_reference_at; upsert seeds the
-		// intrinsic value plus both dates on the very first insertion.
-		upsertDoc := it.LeakDoc()
-		upsertDoc["inserted_at"] = nowStr
-		upsertDoc["last_reference_at"] = nowStr
-		lb, err := json.Marshal(map[string]interface{}{
-			"doc":    map[string]interface{}{"last_reference_at": nowStr},
-			"upsert": upsertDoc,
-		})
+		lb, err := json.Marshal(it.LeakDoc())
 		if err != nil {
 			return err
 		}
-		leakDocs[leakID] = lb
-		leakLen += len(lb)
+		if err := ew.queueLeak(leakIndex, leakID, lb, nowStr); err != nil {
+			return err
+		}
 
 		// Reference doc: pointer + occurrence context.
 		ref := it.RefDoc()
@@ -1030,25 +1243,12 @@ func ingestLeaks[T models.LeakIndexable](ew *ElasticWriter, leakIndex, refIndex,
 		if err != nil {
 			return err
 		}
-		refDocs[refID(fileID, leakID)] = rb
-		refLen += len(rb)
-
-		if len(leakDocs) >= elkBulkCount || leakLen >= elkBulkMaxSize {
-			if err := flushLeaks(); err != nil {
-				return err
-			}
-		}
-		if len(refDocs) >= elkBulkCount || refLen >= elkBulkMaxSize {
-			if err := flushRefs(); err != nil {
-				return err
-			}
+		if err := ew.queueDoc(refIndex, refID(fileID, leakID), rb); err != nil {
+			return err
 		}
 	}
 
-	if err := flushLeaks(); err != nil {
-		return err
-	}
-	return flushRefs()
+	return nil
 }
 
 // writeSync performs the actual bulk HTTP calls against OpenSearch.
@@ -1129,17 +1329,10 @@ func (ew *ElasticWriter) writeSync(result *models.File) error {
 		return err
 	}
 
-	res, err := ew.Client.Index(ew.Index+"_ctrl", bytes.NewReader(b_data),
-		ew.Client.Index.WithDocumentID(fileID))
-	if err != nil {
-		return err
-	}
-	defer res.Body.Close()
-	if res.StatusCode != 200 && res.StatusCode != 201 {
-		return fmt.Errorf("Cannot create/update file document: %s", res.String())
-	}
-
-	return nil
+	// Buffered like everything else rather than sent as its own request: one
+	// single-document index call per file was, for the many files that carry
+	// few leaks, the largest single share of the round-trips.
+	return ew.queueDoc(ew.Index+"_ctrl", fileID, b_data)
 }
 
 func (ew *ElasticWriter) CreateIndex(index string, mapping string) error {
@@ -1205,36 +1398,75 @@ func (ew *ElasticWriter) CreateIndex(index string, mapping string) error {
 
 }
 
-// sendBulk ships a batch of documents to `index` using the given bulk action.
+// jsonQuote returns s as a JSON string literal (quoted and escaped).
+func jsonQuote(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
+}
+
+// leakUpsertLine renders the update body for one pending leak: the date script
+// for documents that already exist, and the seed document (intrinsic fields
+// plus both dates) for the first insertion.
 //
-//   - "index"  : each doc value is a full source document; the meta line is
-//     { "index": { "_id": <id> } } and an existing doc is replaced.
-//   - "update" : each doc value is an update body ({"doc":...,"upsert":...});
-//     the meta line is { "update": { "_id": <id>, "retry_on_conflict": 5 } }
-//     so concurrent upserts of the same shared leak retry instead of
-//     failing with a version conflict.
-func (ew *ElasticWriter) sendBulk(index string, action string, docs map[string][]byte) error {
-	var raw map[string]interface{}
-	var buf bytes.Buffer
-	size := 0
-	for id, doc := range docs {
-		var meta []byte
-		if action == "update" {
-			meta = []byte(fmt.Sprintf(`{ "update" : { "_id" : %q, "retry_on_conflict" : 5 } }%s`, id, "\n"))
-		} else {
-			meta = []byte(fmt.Sprintf(`{ "index" : { "_id" : %q } }%s`, id, "\n"))
-		}
-		data := []byte(doc)
-		data = append(data, "\n"...)
-
-		size += len(meta) + len(data)
-		buf.Grow(len(meta) + len(data))
-		buf.Write(meta)
-		buf.Write(data)
-
+// The two dates are spliced onto the front of the already-marshalled intrinsic
+// object instead of re-marshalling it, because the object is built once when
+// the leak enters the buffer while the dates keep moving until it is flushed.
+func leakUpsertLine(p *pendingLeak) []byte {
+	var seed []byte
+	head := fmt.Sprintf(`{"inserted_at":%s,"last_reference_at":%s`, jsonQuote(p.first), jsonQuote(p.last))
+	if len(p.doc) < 2 || p.doc[0] != '{' || len(p.doc) == 2 {
+		seed = []byte(head + "}")
+	} else {
+		seed = append([]byte(head+","), p.doc[1:]...)
 	}
+	return []byte(fmt.Sprintf(`{"script":{"lang":"painless","source":%s,"params":{"first":%s,"last":%s}},"upsert":%s}`,
+		elkLeakScriptJSON, jsonQuote(p.first), jsonQuote(p.last), seed))
+}
 
-	ew.logf("Elastic bulk start: %d docs (%s), %s -> %s", len(docs), action, tools.Bytes(uint64(size)), index)
+// sendLeakBulk ships a batch of deduplicated leak upserts to a leak index.
+// retry_on_conflict lets concurrent workers touching the same shared leak retry
+// instead of failing with a version conflict.
+func (ew *ElasticWriter) sendLeakBulk(index string, docs map[string]*pendingLeak) error {
+	if len(docs) == 0 {
+		return nil
+	}
+	var buf bytes.Buffer
+	for id, p := range docs {
+		meta := fmt.Sprintf(`{ "update" : { "_id" : %s, "retry_on_conflict" : 5 } }%s`, jsonQuote(id), "\n")
+		line := leakUpsertLine(p)
+		buf.Grow(len(meta) + len(line) + 1)
+		buf.WriteString(meta)
+		buf.Write(line)
+		buf.WriteByte('\n')
+	}
+	return ew.postBulk(index, "update", &buf, len(docs))
+}
+
+// sendBulk ships a batch of full source documents to `index`. The meta line is
+// { "index": { "_id": <id> } }, so an existing document is replaced -- every id
+// this writer produces is deterministic, so a replay rewrites the same content.
+func (ew *ElasticWriter) sendBulk(index string, action string, docs map[string][]byte) error {
+	if len(docs) == 0 {
+		return nil
+	}
+	var buf bytes.Buffer
+	for id, doc := range docs {
+		meta := fmt.Sprintf(`{ %s : { "_id" : %s } }%s`, jsonQuote(action), jsonQuote(id), "\n")
+		buf.Grow(len(meta) + len(doc) + 1)
+		buf.WriteString(meta)
+		buf.Write(doc)
+		buf.WriteByte('\n')
+	}
+	return ew.postBulk(index, action, &buf, len(docs))
+}
+
+// postBulk performs the HTTP _bulk call (with retries) for an already-rendered
+// NDJSON payload and records the bulk-level metrics.
+func (ew *ElasticWriter) postBulk(index string, action string, buf *bytes.Buffer, count int) error {
+	var raw map[string]interface{}
+	size := buf.Len()
+
+	ew.logf("Elastic bulk start: %d docs (%s), %s -> %s", count, action, tools.Bytes(uint64(size)), index)
 
 	start := time.Now()
 	for i := range 10 {
@@ -1244,76 +1476,90 @@ func (ew *ElasticWriter) sendBulk(index string, action string, docs map[string][
 		if err != nil {
 			return err
 		}
-		defer res.Body.Close()
 		reqDur := time.Since(reqStart)
 		if i > 0 {
 			ew.metBulkRetries.Add(1)
 		}
 
-		if res.IsError() {
+		status := res.StatusCode
+		isErr := res.IsError()
+
+		if isErr {
 
 			if i >= 5 {
-				if err := json.NewDecoder(res.Body).Decode(&raw); err != nil {
-					return fmt.Errorf("Failure to to parse response body: %s", err)
-				} else {
-					return fmt.Errorf("Error: [%d] %s: %s",
-						res.StatusCode,
-						raw["error"].(map[string]interface{})["type"],
-						raw["error"].(map[string]interface{})["reason"])
+				decErr := json.NewDecoder(res.Body).Decode(&raw)
+				drainClose(res.Body)
+				if decErr != nil {
+					return fmt.Errorf("Failure to to parse response body: %s", decErr)
 				}
+				return fmt.Errorf("Error: [%d] %s: %s",
+					status,
+					raw["error"].(map[string]interface{})["type"],
+					raw["error"].(map[string]interface{})["reason"])
 
 			}
+			drainClose(res.Body)
 
 			// A successful response might still contain errors for particular documents...
 			//
 		} else {
 			var blk *bulkResponse
-			if err := json.NewDecoder(res.Body).Decode(&blk); err != nil {
-				return fmt.Errorf("Failure to to parse response body: %s", err)
-			} else {
-				// Count item-level errors and log a single aggregated line
-				// instead of spamming one log per failed doc.
-				itemErrs := 0
-				var firstErr string
-				for _, d := range blk.Items {
-					// The item is keyed by the action used; pick whichever the
-					// server populated (Status != 0).
-					r := d.Index
-					if r.Status == 0 {
-						r = d.Update
-					}
-					if r.Status > 201 {
-						itemErrs++
-						if firstErr == "" {
-							firstErr = fmt.Sprintf("[%d] %s: %s",
-								r.Status, r.Error.Type, r.Error.Reason)
-						}
+			decErr := json.NewDecoder(res.Body).Decode(&blk)
+			drainClose(res.Body)
+			if decErr != nil {
+				return fmt.Errorf("Failure to to parse response body: %s", decErr)
+			}
+			// Count item-level errors and log a single aggregated line
+			// instead of spamming one log per failed doc.
+			itemErrs := 0
+			var firstErr string
+			for _, d := range blk.Items {
+				// The item is keyed by the action used; pick whichever the
+				// server populated (Status != 0).
+				r := d.Index
+				if r.Status == 0 {
+					r = d.Update
+				}
+				if r.Status > 201 {
+					itemErrs++
+					if firstErr == "" {
+						firstErr = fmt.Sprintf("[%d] %s: %s",
+							r.Status, r.Error.Type, r.Error.Reason)
 					}
 				}
-				if itemErrs > 0 {
-					ew.logf("Elastic bulk %s: %d/%d items failed (first: %s)",
-						index, itemErrs, len(blk.Items), firstErr)
-				}
+			}
+			if itemErrs > 0 {
+				logger.Warnf("Elastic bulk %s: %d/%d items failed (first: %s)",
+					index, itemErrs, len(blk.Items), firstErr)
 			}
 		}
 
-		if res.StatusCode == 200 || res.StatusCode == 201 {
+		if status == 200 || status == 201 {
 			total := time.Since(start)
 			bps := float64(size) / total.Seconds()
-			dps := float64(len(docs)) / total.Seconds()
-			ew.recordBulk(len(docs), size, reqDur)
+			dps := float64(count) / total.Seconds()
+			ew.recordBulk(count, size, reqDur)
 			ew.logf("Elastic bulk OK %s: %d docs, %s in %s (req=%s, %.0f docs/s, %s/s)",
-				index, len(docs), tools.Bytes(uint64(size)), total, reqDur,
+				index, count, tools.Bytes(uint64(size)), total, reqDur,
 				dps, tools.Bytes(uint64(bps)))
 			return nil
 		}
 
 		ew.logf("Elastic bulk attempt %d on %s failed with status %d in %s; retrying",
-			i+1, index, res.StatusCode, reqDur)
+			i+1, index, status, reqDur)
 		time.Sleep(1 * time.Second)
 	}
 
 	return errors.New("Cannot create/update document")
+}
+
+// drainClose reads a response body to EOF before closing it. Go only returns a
+// keep-alive connection to the pool when its body was fully consumed; closing
+// early makes the next request pay a fresh TCP (and, over HTTPS, TLS)
+// handshake, which at hundreds of thousands of requests per run is not free.
+func drainClose(body io.ReadCloser) {
+	_, _ = io.Copy(io.Discard, body)
+	_ = body.Close()
 }
 
 func (ew *ElasticWriter) CreateDoc(index string, data []byte, doc_id string) error {
