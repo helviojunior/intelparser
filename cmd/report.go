@@ -37,6 +37,8 @@ var dateFilter = ""
 var indexedDateFilter = ""
 var rptFilter = ""
 var rptFilterFile = ""
+var rptDisableUrl = false
+var rptDisableEmail = false
 var filterList = []string{}
 var reportCmd = &cobra.Command{
 	Use:   "report",
@@ -129,6 +131,9 @@ func init() {
 	reportCmd.PersistentFlags().StringVarP(&rptFilterFile, "filter-file", "F", "", "A path to text file with filter terms. One term per line")
 	reportCmd.PersistentFlags().StringVar(&dateFilter, "date-from", "", "Minimum date to convert. (Format: yyyy-mm-dd)")
 	reportCmd.PersistentFlags().StringVar(&indexedDateFilter, "indexed-date-from", "", "Minimum date to convert. (Format: yyyy-mm-dd)")
+
+	reportCmd.PersistentFlags().BoolVar(&rptDisableUrl, "disable-url", false, "Disable URL's indexes")
+	reportCmd.PersistentFlags().BoolVar(&rptDisableEmail, "disable-email", false, "Disable E-mail's indexes")
 }
 
 func (st *ConvStatus) Print() {
@@ -297,6 +302,9 @@ func convertFromDbTo(fromUri string, writer writers.Writer, status *ConvStatus) 
 		defer rCred.Close()
 
 		sqlEmail := sql1 + prepareSQL([]string{"email"})
+		if rptDisableEmail {
+			sqlEmail = sql1 + "and 1 = 0" //To return nothing
+		}
 		rEml, err := conn.Model(&models.Email{}).Where(sqlEmail).Rows()
 		if err != nil {
 			return err
@@ -304,6 +312,9 @@ func convertFromDbTo(fromUri string, writer writers.Writer, status *ConvStatus) 
 		defer rEml.Close()
 
 		sqlUrl := sql1 + prepareSQL([]string{"url"})
+		if rptDisableUrl {
+			sqlUrl = sql1 + "and 1 = 0" //To return nothing
+		}
 		rUrl, err := conn.Model(&models.URL{}).Where(sqlUrl).Rows()
 		if err != nil {
 			return err
@@ -326,33 +337,37 @@ func convertFromDbTo(fromUri string, writer writers.Writer, status *ConvStatus) 
 			}
 		}()
 
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			logger.Debug("Checking emails...")
-			var eml models.Email
-			for rEml.Next() {
-				conn.ScanRows(rEml, &eml)
-				if containsFilterWord(eml.Email) || containsFilterWord(eml.NearText) {
-					newResult.Emails = append(newResult.Emails, eml)
-					status.Email++
+		if !rptDisableEmail {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				logger.Debug("Checking emails...")
+				var eml models.Email
+				for rEml.Next() {
+					conn.ScanRows(rEml, &eml)
+					if containsFilterWord(eml.Email) || containsFilterWord(eml.NearText) {
+						newResult.Emails = append(newResult.Emails, eml)
+						status.Email++
+					}
 				}
-			}
-		}()
+			}()
+		}
 
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			logger.Debug("Checking urls...")
-			var u models.URL
-			for rUrl.Next() {
-				conn.ScanRows(rUrl, &u)
-				if containsFilterWord(u.Url) || containsFilterWord(u.NearText) {
-					newResult.URLs = append(newResult.URLs, u)
-					status.Url++
+		if !rptDisableUrl {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				logger.Debug("Checking urls...")
+				var u models.URL
+				for rUrl.Next() {
+					conn.ScanRows(rUrl, &u)
+					if containsFilterWord(u.Url) || containsFilterWord(u.NearText) {
+						newResult.URLs = append(newResult.URLs, u)
+						status.Url++
+					}
 				}
-			}
-		}()
+			}()
+		}
 
 		wg.Wait()
 

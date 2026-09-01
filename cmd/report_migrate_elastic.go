@@ -190,6 +190,27 @@ type oldFileDoc struct {
 	MIMEType   string    `json:"mime_type"`
 }
 
+// leakSuffixes are the five old-model leak indices hanging off the source index
+// base, in the order they are reported.
+var leakSuffixes = []string{"_creds", "_urls", "_emails", "_phone", "_document"}
+
+// activeLeakSuffixes is leakSuffixes minus the indices --disable-url and
+// --disable-email turn off, so a run that suppresses them neither counts nor
+// replays those leaks.
+func activeLeakSuffixes() []string {
+	out := make([]string, 0, len(leakSuffixes))
+	for _, suffix := range leakSuffixes {
+		if suffix == "_urls" && rptDisableUrl {
+			continue
+		}
+		if suffix == "_emails" && rptDisableEmail {
+			continue
+		}
+		out = append(out, suffix)
+	}
+	return out
+}
+
 // migrateElastic reads the old-model dataset under srcIndex and replays every
 // file (with its leaks) through the new writer.
 //
@@ -206,6 +227,21 @@ type oldFileDoc struct {
 func migrateElastic(writer *writers.ElasticWriter, srcIndex string, limit, batchFiles, batchBytes, readWorkers int) error {
 	client := writer.Client
 
+	// --disable-url / --disable-email drop the matching source index from the
+	// whole replay: it is not counted, not queried per batch, and its leaks
+	// never reach the writer.
+	suffixes := activeLeakSuffixes()
+	if len(suffixes) != len(leakSuffixes) {
+		skipped := make([]string, 0, 2)
+		if rptDisableUrl {
+			skipped = append(skipped, "urls")
+		}
+		if rptDisableEmail {
+			skipped = append(skipped, "emails")
+		}
+		log.Infof("Skipping the %s leak indices of %q", strings.Join(skipped, " and "), srcIndex)
+	}
+
 	total, err := countDocs(client, srcIndex)
 	if err != nil {
 		return fmt.Errorf("counting source file index %q: %w", srcIndex, err)
@@ -221,12 +257,12 @@ func migrateElastic(writer *writers.ElasticWriter, srcIndex string, limit, batch
 	// leaks they carry, so "600/33.981 files" says almost nothing about how far
 	// along a run is; the leak count is the work itself. Not fatal if it fails
 	// -- the replay just falls back to counting files.
-	leakCounts, totalLeaks, err := countSourceLeaks(client, srcIndex)
+	leakCounts, totalLeaks, err := countSourceLeaks(client, srcIndex, suffixes)
 	if err != nil {
 		log.Warnf("Could not count the source leak indices, progress will be reported in files only: %s", err)
 	} else {
-		parts := make([]string, 0, len(leakSuffixes))
-		for _, suffix := range leakSuffixes {
+		parts := make([]string, 0, len(suffixes))
+		for _, suffix := range suffixes {
 			parts = append(parts, fmt.Sprintf("%s %s",
 				strings.TrimPrefix(suffix, "_"), tools.FormatInt64Comma(leakCounts[suffix])))
 		}
@@ -404,19 +440,15 @@ type fileMeta struct {
 	doc *oldFileDoc
 }
 
-// leakSuffixes are the five old-model leak indices hanging off the source index
-// base, in the order they are reported.
-var leakSuffixes = []string{"_creds", "_urls", "_emails", "_phone", "_document"}
-
 // countSourceLeaks asks each source leak index how many documents it holds. The
 // five counts run concurrently; a missing index counts as zero (countDocs
 // treats a 404 as an empty index), so a dataset without, say, a _phone index is
 // not an error.
-func countSourceLeaks(client *elk.Client, srcIndex string) (map[string]int64, int64, error) {
-	counts := make([]int64, len(leakSuffixes))
-	errs := make([]error, len(leakSuffixes))
+func countSourceLeaks(client *elk.Client, srcIndex string, suffixes []string) (map[string]int64, int64, error) {
+	counts := make([]int64, len(suffixes))
+	errs := make([]error, len(suffixes))
 	var wg sync.WaitGroup
-	for i, suffix := range leakSuffixes {
+	for i, suffix := range suffixes {
 		wg.Add(1)
 		go func(i int, suffix string) {
 			defer wg.Done()
@@ -425,9 +457,9 @@ func countSourceLeaks(client *elk.Client, srcIndex string) (map[string]int64, in
 	}
 	wg.Wait()
 
-	out := make(map[string]int64, len(leakSuffixes))
+	out := make(map[string]int64, len(suffixes))
 	var total int64
-	for i, suffix := range leakSuffixes {
+	for i, suffix := range suffixes {
 		if errs[i] != nil {
 			return nil, 0, fmt.Errorf("counting %s: %w", srcIndex+suffix, errs[i])
 		}
@@ -519,9 +551,18 @@ func fetchBatchLeaks(client *elk.Client, srcIndex string, batch []fileMeta, limi
 		defer wg.Done()
 		creds, errs[0] = fetchLeaks[models.Credential](client, srcIndex+"_creds", body, limit)
 	}()
-	go func() { defer wg.Done(); urls, errs[1] = fetchLeaks[models.URL](client, srcIndex+"_urls", body, limit) }()
 	go func() {
 		defer wg.Done()
+		if rptDisableUrl {
+			return
+		}
+		urls, errs[1] = fetchLeaks[models.URL](client, srcIndex+"_urls", body, limit)
+	}()
+	go func() {
+		defer wg.Done()
+		if rptDisableEmail {
+			return
+		}
 		emails, errs[2] = fetchLeaks[models.Email](client, srcIndex+"_emails", body, limit)
 	}()
 	go func() {

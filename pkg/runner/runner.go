@@ -550,13 +550,13 @@ func (run *Runner) DetectFile(file *models.File) error {
 					file.Credentials = append(file.Credentials, finding.Credential)
 				}
 
-				if finding.Email.Email != "" {
+				if finding.Email.Email != "" && !run.options.DisableEmail {
 					run.status.Email += 1
 					finding.Email.Time = file.Date
 					file.Emails = append(file.Emails, finding.Email)
 				}
 
-				if finding.Url.Url != "" {
+				if finding.Url.Url != "" && !run.options.DisableUrl {
 					run.status.Url += 1
 					finding.Url.Time = file.Date
 					file.URLs = append(file.URLs, finding.Url)
