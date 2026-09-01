@@ -21,10 +21,11 @@ import (
 
 var conversionCmdExtensions = []string{".sqlite3", ".db", ".jsonl"}
 var convertCmdFlags = struct {
-	fromFile  string
-	fromDbUri string
-	toFile    string
-	toDbUri   string
+	fromFile       string
+	fromDbUri      string
+	fromElasticUri string
+	toFile         string
+	toDbUri        string
 
 	fromExt string
 	toExt   string
@@ -37,9 +38,9 @@ var convertCmd = &cobra.Command{
 
 Convert between SQLite and JSON Lines file formats.
 
-A --from-file (or --from-db-uri) and --to-file (or --to-db-uri) must be specified. The extension
-used for the specified filenames will be used to determine the conversion
-direction and target.`)),
+A source (--from-file, --from-db-uri or --from-elasticsearch-uri) and a destination
+(--to-file or --to-db-uri) must be specified. The extension used for the specified
+filenames will be used to determine the conversion direction and target.`)),
 	Example: `
    - intelparser report convert --to-file data.jsonl
    - intelparser report convert --to-file data.jsonl --filter sec4us,webapi,hookchain
@@ -47,19 +48,30 @@ direction and target.`)),
    - intelparser report convert --from-file intelparser.jsonl --to-file db.sqlite3
    - intelparser report convert --from-db-uri postgres://user:pass@host:5432/db --to-file data.jsonl
    - intelparser report convert --from-file data.jsonl --to-db-uri postgres://user:pass@host:5432/db
-   - intelparser report convert --from-db-uri postgres://user:pass@host:5432/srcdb --to-db-uri postgres://user:pass@host:5432/dstdb`,
+   - intelparser report convert --from-db-uri postgres://user:pass@host:5432/srcdb --to-db-uri postgres://user:pass@host:5432/dstdb
+   - intelparser report convert --from-elasticsearch-uri http://localhost:9200/intelparser --to-file data.jsonl`,
 	PreRunE: func(cmd *cobra.Command, args []string) error {
 		var err error
 
 		fromFileChanged := cmd.Flags().Changed("from-file")
 
-		if !fromFileChanged && convertCmdFlags.fromDbUri == "" {
-			// Using default --from-file value, that's fine
-		} else if fromFileChanged && convertCmdFlags.fromDbUri != "" {
-			return errors.New("--from-file and --from-db-uri are mutually exclusive")
+		// --from-file has a default, so it is only a source when it was named
+		// explicitly; otherwise any of the URI sources wins over it silently.
+		sources := 0
+		if fromFileChanged {
+			sources++
+		}
+		if convertCmdFlags.fromDbUri != "" {
+			sources++
+		}
+		if convertCmdFlags.fromElasticUri != "" {
+			sources++
+		}
+		if sources > 1 {
+			return errors.New("--from-file, --from-db-uri and --from-elasticsearch-uri are mutually exclusive")
 		}
 
-		if convertCmdFlags.fromDbUri != "" {
+		if convertCmdFlags.fromDbUri != "" || convertCmdFlags.fromElasticUri != "" {
 			convertCmdFlags.fromFile = ""
 		}
 
@@ -92,7 +104,7 @@ direction and target.`)),
 			}
 		}
 
-		if convertCmdFlags.fromDbUri == "" {
+		if convertCmdFlags.fromDbUri == "" && convertCmdFlags.fromElasticUri == "" {
 			convertCmdFlags.fromFile, err = resolver.ResolveFullPath(convertCmdFlags.fromFile)
 			if err != nil {
 				return err
@@ -173,7 +185,12 @@ direction and target.`)),
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if convertCmdFlags.fromDbUri != "" {
+			if convertCmdFlags.fromElasticUri != "" {
+				if err := convertFromElasticTo(convertCmdFlags.fromElasticUri, writer, status); err != nil {
+					log.Error("failed to convert from elasticsearch", "err", err)
+					stCode = 6
+				}
+			} else if convertCmdFlags.fromDbUri != "" {
 				if err := convertFromDbTo(convertCmdFlags.fromDbUri, writer, status); err != nil {
 					log.Error("failed to convert from database", "err", err)
 					stCode = 2
@@ -253,6 +270,7 @@ func init() {
 
 	convertCmd.Flags().StringVar(&convertCmdFlags.fromFile, "from-file", "~/.intelparser.db", "The file to convert from")
 	convertCmd.Flags().StringVar(&convertCmdFlags.fromDbUri, "from-db-uri", "", "The database URI to convert from. Supports SQLite, Postgres, and MySQL (e.g., postgres://user:pass@host:port/db)")
+	convertCmd.Flags().StringVar(&convertCmdFlags.fromElasticUri, "from-elasticsearch-uri", "", "The Elasticsearch URI to convert from (e.g., http://user:pass@host:9200/index)")
 	convertCmd.Flags().StringVar(&convertCmdFlags.toFile, "to-file", "", "The file to convert to. Use .sqlite3 for conversion to SQLite, and .jsonl for conversion to JSON Lines")
 	convertCmd.Flags().StringVar(&convertCmdFlags.toDbUri, "to-db-uri", "", "The database URI to convert to. Supports SQLite, Postgres, and MySQL (e.g., postgres://user:pass@host:port/db)")
 }

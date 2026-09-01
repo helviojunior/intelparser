@@ -341,11 +341,16 @@ func (i Interceptor) RoundTrip(req *http.Request) (*http.Response, error) {
 // NewElasticWriter returns a new Elasticsearch writer.
 // When debug is true, operational logs are emitted at Info level; otherwise
 // they are emitted at Debug level.
-func NewElasticWriter(uri string, debug bool) (*ElasticWriter, error) {
+// NewElasticClient builds a client for the cluster addressed by uri and returns
+// it together with the base index name the URI path carries (defaulting to
+// "intelparser"). It only talks to the cluster to ping it, so it is also the way
+// to reach an index that is being read rather than written -- nothing here
+// creates or alters an index.
+func NewElasticClient(uri string, debug bool) (*elk.Client, string, error) {
 
 	u, err := url.Parse(uri)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
 	username := u.User.Username()
@@ -359,14 +364,6 @@ func NewElasticWriter(uri string, debug bool) (*ElasticWriter, error) {
 	index_name = strings.SplitN(index_name, "/", 2)[0]
 	if index_name == "" {
 		index_name = "intelparser"
-	}
-
-	wr := &ElasticWriter{
-		Index:       index_name,
-		debug:       debug,
-		pendUpdates: map[string]map[string]*pendingLeak{},
-		pendIndexes: map[string]map[string][]byte{},
-		pendBytes:   map[string]int{},
 	}
 
 	conf := elk.Config{
@@ -417,17 +414,36 @@ func NewElasticWriter(uri string, debug bool) (*ElasticWriter, error) {
 		conf.Password = password
 	}
 
-	wr.Client, err = elk.NewClient(conf)
+	client, err := elk.NewClient(conf)
+	if err != nil {
+		return nil, "", err
+	}
+
+	// Faz um ping (chama GET / internamente)
+	res, err := client.Ping()
+	if err != nil {
+		return nil, "", err
+	}
+	defer res.Body.Close()
+
+	return client, index_name, nil
+}
+
+func NewElasticWriter(uri string, debug bool) (*ElasticWriter, error) {
+
+	client, index_name, err := NewElasticClient(uri, debug)
 	if err != nil {
 		return nil, err
 	}
 
-	// Faz um ping (chama GET / internamente)
-	res, err := wr.Client.Ping()
-	if err != nil {
-		return nil, err
+	wr := &ElasticWriter{
+		Index:       index_name,
+		Client:      client,
+		debug:       debug,
+		pendUpdates: map[string]map[string]*pendingLeak{},
+		pendIndexes: map[string]map[string][]byte{},
+		pendBytes:   map[string]int{},
 	}
-	defer res.Body.Close()
 
 	if v1, ok := os.LookupEnv("ELK_BULK_SIZE"); ok {
 		if i1, err := strconv.ParseInt(v1, 10, 32); err == nil {
