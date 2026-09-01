@@ -514,7 +514,7 @@ func (run *Runner) DetectFile(file *models.File) error {
 				if mimetype, err := filetype.Match(buf[:n]); err != nil {
 					return err
 				} else if mimetype.MIME.Type == "application" {
-					return errors.New(fmt.Sprintf("Cannot parse %s files", mimetype.MIME.Value)) // skip binary files
+					return fmt.Errorf("Cannot parse %s files", mimetype.MIME.Value) // skip binary files
 				}
 			}
 
