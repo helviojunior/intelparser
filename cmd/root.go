@@ -50,6 +50,15 @@ var rootCmd = &cobra.Command{
 			log.Debug("debug logging enabled")
 		}
 
+		// Long imports hold a large live heap and allocate at an enormous rate,
+		// so inside a container the default GC target (twice the live set) is
+		// what reaches the cgroup cap first. Told about the cap, the collector
+		// runs more often near it instead of letting the kernel end the run.
+		if soft, container, ok := tools.ApplyMemoryLimit(); ok {
+			log.Infof("Container memory limit is %s; capping the Go heap at %s (set GOMEMLIMIT to override)",
+				tools.Bytes(uint64(container)), tools.Bytes(uint64(soft)))
+		}
+
 		if opts.Logging.TextFile != "" {
 			// check if the destination exists, if not, create it
 			dst, err := tools.CreateFileWithDir(opts.Logging.TextFile)
