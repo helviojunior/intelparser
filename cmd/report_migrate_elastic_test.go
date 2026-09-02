@@ -230,6 +230,74 @@ func TestHumanDuration(t *testing.T) {
 	}
 }
 
+// The batch budget is the only thing standing between a leak-dense dataset and
+// the container's memory limit, so it has to be driven by what the previous
+// batches actually pulled — not by the source files' own size, which is often
+// zero and never predicts leak volume.
+func TestBatchSizerHonoursTheByteBudget(t *testing.T) {
+	const budget = 64 << 20
+	s := newBatchSizer(500, budget)
+
+	if got := s.next(10000); got != batchProbeFiles {
+		t.Fatalf("first batch = %d files, want the %d-file probe", got, batchProbeFiles)
+	}
+
+	// 8 MB of leaks per file: the budget allows eight of them.
+	s.observe(batchProbeFiles, int64(batchProbeFiles)*8<<20)
+	if got := s.next(10000); got != 8 {
+		t.Errorf("batch = %d files at 8 MB/file against a 64 MB budget, want 8", got)
+	}
+}
+
+// Files with no leaks at all are common. Averaging them in would drag the
+// estimate to zero and size the next batch at the --batch-files cap, which is
+// precisely the blow-up the budget exists to prevent.
+func TestBatchSizerIgnoresEmptyBatches(t *testing.T) {
+	s := newBatchSizer(500, 64<<20)
+	s.next(10000)
+	s.observe(batchProbeFiles, int64(batchProbeFiles)*8<<20)
+	before := s.next(10000)
+
+	s.observe(before, 0)
+	if got := s.next(10000); got > 2*before {
+		t.Errorf("batch = %d files after an empty batch, want no more than %d", got, 2*before)
+	}
+	if s.perFile == 0 {
+		t.Error("an empty batch reset the running estimate")
+	}
+}
+
+// Even when the estimate says a huge batch would fit, growth is capped at twice
+// the previous batch: the estimate is an average, and the files it was measured
+// on are not the files the next batch will cover.
+func TestBatchSizerRampsUpGradually(t *testing.T) {
+	s := newBatchSizer(500, 64<<20)
+	first := s.next(10000)
+	s.observe(first, 1) // ~nothing per file: the budget alone would allow the cap
+
+	if got := s.next(10000); got != 2*first {
+		t.Errorf("batch = %d files, want %d (at most double the previous batch)", got, 2*first)
+	}
+}
+
+// A single file whose leaks exceed the whole budget still has to be migrated:
+// its leaks are resolved in one query, so the batch cannot go below one file.
+func TestBatchSizerNeverGoesBelowOneFile(t *testing.T) {
+	s := newBatchSizer(500, 1<<20)
+	s.next(10000)
+	s.observe(1, 4<<30)
+	if got := s.next(10000); got != 1 {
+		t.Errorf("batch = %d files for a file far over budget, want 1", got)
+	}
+}
+
+func TestBatchSizerStopsAtRemaining(t *testing.T) {
+	s := newBatchSizer(500, 64<<20)
+	if got := s.next(3); got != 3 {
+		t.Errorf("batch = %d files with 3 remaining, want 3", got)
+	}
+}
+
 // The old model stored file_id as the file fingerprint — a string, where the
 // model's FileID is a uint. That one clash is expected on every document and
 // must not cost the rest of the leak.

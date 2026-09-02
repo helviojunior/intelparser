@@ -58,9 +58,12 @@ documents (default 500). Raise --limit to trade memory and heap pressure on the
 source cluster for fewer round-trips.
 
 Leaks are not fetched one file at a time: files are grouped into batches
-(--batch-files, capped by --batch-mb of source content) and each batch pulls its
-leaks with a single terms query per leak index, which is what keeps the
-round-trip count proportional to the data rather than to the file count.
+(--batch-files) and each batch pulls its leaks with a single terms query per
+leak index, which is what keeps the round-trip count proportional to the data
+rather than to the file count. A whole batch's leaks are held in memory at once,
+so --batch-mb caps how much a batch may pull -- measured against what the
+previous batches actually returned, since nothing about a file's own size
+predicts how many leaks it carries.
 
 File content is the one thing still read per file, and it is by far the largest,
 so --read-workers of them are read at a time. Watch the ELK metrics line to
@@ -133,7 +136,7 @@ func init() {
 	migrateElkCmd.Flags().BoolVar(&migrateElkFlags.debug, "write-elasticsearch-enable-debug", false, "Enable ElasticSearch writer debug logging")
 	migrateElkCmd.Flags().IntVar(&migrateElkFlags.limit, "limit", 500, "How many documents to pull per search request (1-10000)")
 	migrateElkCmd.Flags().IntVar(&migrateElkFlags.batchFiles, "batch-files", 500, "How many files to resolve leaks for per terms query (1-10000)")
-	migrateElkCmd.Flags().IntVar(&migrateElkFlags.batchMB, "batch-mb", 64, "Cap a batch once the source files in it add up to this many MB, so one huge file does not blow up memory (two batches are held at a time)")
+	migrateElkCmd.Flags().IntVar(&migrateElkFlags.batchMB, "batch-mb", 64, "Memory budget per batch, in MB of source leak JSON. Batch sizes are measured against what the previous batches actually pulled, so a file dense in leaks lands in a small batch (two batches are held at a time, and the decoded documents cost a few times the JSON)")
 	migrateElkCmd.Flags().IntVar(&migrateElkFlags.readWorkers, "read-workers", 8, "How many file contents to read from the source concurrently (1-64)")
 }
 
@@ -308,7 +311,7 @@ func migrateElastic(writer *writers.ElasticWriter, srcIndex string, limit, batch
 			len(files), total)
 	}
 
-	log.Infof("Migrating %s files from %q to %q (batches of up to %s files / %s, %d readers)",
+	log.Infof("Migrating %s files from %q to %q (batches of up to %s files / %s of leaks, %d readers)",
 		tools.FormatIntComma(len(files)), srcIndex, writer.Index,
 		tools.FormatIntComma(batchFiles), tools.Bytes(uint64(batchBytes)), readWorkers)
 
@@ -328,21 +331,13 @@ func migrateElastic(writer *writers.ElasticWriter, srcIndex string, limit, batch
 	defer close(done)
 	go func() {
 		defer close(jobs)
+		sizer := newBatchSizer(batchFiles, batchBytes)
 		for start := 0; start < len(files); {
-			// A batch is capped both by file count and by how much source
-			// content it represents: the leaks of the whole batch are held in
-			// memory at once, and a single file can hold millions of them, so
-			// one very large file ends up in a batch of its own.
-			end := start + 1
-			acc := int(files[start].doc.Size)
-			for end < len(files) && end-start < batchFiles && acc < batchBytes {
-				acc += int(files[end].doc.Size)
-				end++
-			}
-			batch := files[start:end]
-			start = end
+			batch := files[start : start+sizer.next(len(files)-start)]
+			start += len(batch)
 
-			leaks, err := fetchBatchLeaks(client, srcIndex, batch, limit)
+			leaks, fetched, err := fetchBatchLeaks(client, srcIndex, batch, limit)
+			sizer.observe(len(batch), fetched)
 			select {
 			case jobs <- &batchJob{batch: batch, leaks: leaks, err: err}:
 			case <-done:
@@ -378,7 +373,17 @@ func migrateElastic(writer *writers.ElasticWriter, srcIndex string, limit, batch
 			go func() {
 				defer wg.Done()
 				for fm := range work {
-					file, err := buildFile(client, srcIndex, fm, leaks[fm.id])
+					// Hand the file its leaks and drop the batch's reference to
+					// them in the same breath, so the batch shrinks as it is
+					// consumed instead of pinning every file's leaks until its
+					// last file is done. Only the files still in flight and the
+					// ones sitting in the writer queue stay resident.
+					mu.Lock()
+					fileLeaks := leaks[fm.id]
+					delete(leaks, fm.id)
+					mu.Unlock()
+
+					file, err := buildFile(client, srcIndex, fm, fileLeaks)
 
 					n := int64(0)
 					if err == nil {
@@ -438,6 +443,89 @@ func migrateElastic(writer *writers.ElasticWriter, srcIndex string, limit, batch
 type fileMeta struct {
 	id  string
 	doc *oldFileDoc
+}
+
+// batchSizer decides how many files the next batch should cover so that the
+// leaks it pulls stay inside --batch-mb.
+//
+// The cap used to be applied to the source files' own `size` field, which does
+// not work for two independent reasons. It is frequently zero -- the IntelX
+// parser stores 0 whenever it has no info record for a file -- and a zero cap
+// never binds, so every batch silently became the full --batch-files. And even
+// when it is populated it says nothing about the leak volume: near_text copies
+// the surrounding line onto every occurrence, so a couple of MB of source can
+// expand into tens of MB of leak documents. A dataset averaging twenty thousand
+// leaks per file therefore ended up holding several GB per batch, twice over
+// (one batch replaying, one prefetched), which is what ran the migration into
+// the container's memory limit.
+//
+// So the budget is measured against what is actually pulled. Each batch reports
+// the source JSON its leaks came from; that gives a bytes-per-file figure to
+// divide the budget by. Two guards keep a wrong figure from being expensive:
+// the first batch is a small probe, taken before anything is known, and no
+// batch may be more than twice the size of the one before it, so a run of
+// leak-free files cannot spring back to the cap in one step and blow the
+// budget on the batch that follows them.
+type batchSizer struct {
+	maxFiles  int
+	budget    int
+	perFile   float64 // decayed average of source leak bytes per file; 0 until measured
+	lastFiles int
+}
+
+// batchProbeFiles is the size of the first batch, before anything is known
+// about how many leaks a file carries. Small enough that even a pathological
+// file costs little, large enough that the measurement it produces is not one
+// outlier.
+const batchProbeFiles = 8
+
+// batchSizerDecay weights the newest measurement against the running average.
+// Leak density varies a lot between neighbouring files, so the average is kept
+// deliberately sluggish -- it is a budget, not a tracking signal.
+const batchSizerDecay = 0.3
+
+func newBatchSizer(maxFiles, budget int) *batchSizer {
+	return &batchSizer{maxFiles: maxFiles, budget: budget}
+}
+
+// next returns how many of the remaining files the next batch should cover.
+func (s *batchSizer) next(remaining int) int {
+	n := batchProbeFiles
+	if s.perFile > 0 {
+		n = int(float64(s.budget) / s.perFile)
+	}
+	if s.lastFiles > 0 && n > 2*s.lastFiles {
+		n = 2 * s.lastFiles
+	}
+	if n > s.maxFiles {
+		n = s.maxFiles
+	}
+	if n > remaining {
+		n = remaining
+	}
+	// One file per batch is the floor: a single file's leaks have to be held
+	// whatever they cost, since they are resolved in one query.
+	if n < 1 {
+		n = 1
+	}
+	s.lastFiles = n
+	return n
+}
+
+// observe folds the leak volume a batch actually pulled into the running
+// average. A batch that returned nothing is ignored rather than averaged in:
+// files without leaks are common, and letting them drag the average toward zero
+// is exactly how the next batch would be sized far too large.
+func (s *batchSizer) observe(files int, fetched int64) {
+	if files <= 0 || fetched <= 0 {
+		return
+	}
+	sample := float64(fetched) / float64(files)
+	if s.perFile == 0 {
+		s.perFile = sample
+		return
+	}
+	s.perFile = (1-batchSizerDecay)*s.perFile + batchSizerDecay*sample
 }
 
 // countSourceLeaks asks each source leak index how many documents it holds. The
@@ -527,10 +615,11 @@ type batchLeaks struct {
 }
 
 // fetchBatchLeaks resolves the leaks of a whole batch of files with one terms
-// query per leak index, and returns them bucketed by file id. The five indices
-// are queried concurrently: they are independent, and the source cluster has no
-// trouble serving five scans at once.
-func fetchBatchLeaks(client *elk.Client, srcIndex string, batch []fileMeta, limit int) (map[string]*batchLeaks, error) {
+// query per leak index, and returns them bucketed by file id together with the
+// total source JSON they came from. The five indices are queried concurrently:
+// they are independent, and the source cluster has no trouble serving five
+// scans at once.
+func fetchBatchLeaks(client *elk.Client, srcIndex string, batch []fileMeta, limit int) (map[string]*batchLeaks, int64, error) {
 	ids := make([]string, len(batch))
 	for i, fm := range batch {
 		ids[i] = fm.id
@@ -545,39 +634,44 @@ func fetchBatchLeaks(client *elk.Client, srcIndex string, batch []fileMeta, limi
 		docs   map[string][]models.Document
 	)
 	errs := make([]error, 5)
+	sizes := make([]int64, 5)
 	var wg sync.WaitGroup
 	wg.Add(5)
 	go func() {
 		defer wg.Done()
-		creds, errs[0] = fetchLeaks[models.Credential](client, srcIndex+"_creds", body, limit)
+		creds, sizes[0], errs[0] = fetchLeaks[models.Credential](client, srcIndex+"_creds", body, limit)
 	}()
 	go func() {
 		defer wg.Done()
 		if rptDisableUrl {
 			return
 		}
-		urls, errs[1] = fetchLeaks[models.URL](client, srcIndex+"_urls", body, limit)
+		urls, sizes[1], errs[1] = fetchLeaks[models.URL](client, srcIndex+"_urls", body, limit)
 	}()
 	go func() {
 		defer wg.Done()
 		if rptDisableEmail {
 			return
 		}
-		emails, errs[2] = fetchLeaks[models.Email](client, srcIndex+"_emails", body, limit)
+		emails, sizes[2], errs[2] = fetchLeaks[models.Email](client, srcIndex+"_emails", body, limit)
 	}()
 	go func() {
 		defer wg.Done()
-		phones, errs[3] = fetchLeaks[models.Phone](client, srcIndex+"_phone", body, limit)
+		phones, sizes[3], errs[3] = fetchLeaks[models.Phone](client, srcIndex+"_phone", body, limit)
 	}()
 	go func() {
 		defer wg.Done()
-		docs, errs[4] = fetchLeaks[models.Document](client, srcIndex+"_document", body, limit)
+		docs, sizes[4], errs[4] = fetchLeaks[models.Document](client, srcIndex+"_document", body, limit)
 	}()
 	wg.Wait()
 	for _, e := range errs {
 		if e != nil {
-			return nil, fmt.Errorf("reading leaks for a batch of %d files from %q: %w", len(batch), srcIndex, e)
+			return nil, 0, fmt.Errorf("reading leaks for a batch of %d files from %q: %w", len(batch), srcIndex, e)
 		}
+	}
+	var fetched int64
+	for _, n := range sizes {
+		fetched += n
 	}
 
 	out := make(map[string]*batchLeaks, len(batch))
@@ -604,26 +698,29 @@ func fetchBatchLeaks(client *elk.Client, srcIndex string, batch []fileMeta, limi
 	for id, v := range docs {
 		bucket(id).docs = v
 	}
-	return out, nil
+	return out, fetched, nil
 }
 
 // fetchLeaks runs one leak query over index and groups the decoded leaks by the
-// file they belong to.
-func fetchLeaks[T any](client *elk.Client, index, body string, limit int) (map[string][]T, error) {
+// file they belong to. It also reports the total source JSON it decoded, which
+// is what the batch sizing in migrateElastic is steered by.
+func fetchLeaks[T any](client *elk.Client, index, body string, limit int) (map[string][]T, int64, error) {
 	out := map[string][]T{}
+	bytes := int64(0)
 	err := searchAll(client, index, body, limit, func(_ string, src json.RawMessage) error {
 		var v T
 		fileID, err := decodeLeak(src, &v)
 		if err != nil {
 			return err
 		}
+		bytes += int64(len(src))
 		out[fileID] = append(out[fileID], v)
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	return out, nil
+	return out, bytes, nil
 }
 
 // termsBody is the batch leak query: every leak whose file_id is one of ids,
