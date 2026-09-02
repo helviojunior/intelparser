@@ -11,6 +11,7 @@ import (
 	"time"
 
 	elk "github.com/elastic/go-elasticsearch/v8"
+	"github.com/helviojunior/intelparser/pkg/models"
 )
 
 // fakeES serves just enough of the search API to exercise countDocs/scrollAll:
@@ -225,6 +226,75 @@ func TestHumanDuration(t *testing.T) {
 	} {
 		if got := humanDuration(d); got != want {
 			t.Errorf("humanDuration(%s) = %q, want %q", d, got, want)
+		}
+	}
+}
+
+// The old model stored file_id as the file fingerprint — a string, where the
+// model's FileID is a uint. That one clash is expected on every document and
+// must not cost the rest of the leak.
+func TestDecodeLeakKeepsFieldsDespiteFileIDClash(t *testing.T) {
+	src := []byte(`{"file_id":"abc123","fingerprint":"abc123","bucket":"IntelX",
+		"username":"u@example.com","password":"p","url":"https://example.com",
+		"near_text":"context","severity":3}`)
+
+	var c models.Credential
+	fileID, err := decodeLeak(src, &c)
+	if err != nil {
+		t.Fatalf("decodeLeak: %v", err)
+	}
+	if fileID != "abc123" {
+		t.Errorf("file id = %q, want abc123", fileID)
+	}
+	if c.Username != "u@example.com" || c.Password != "p" {
+		t.Errorf("credential = %+v, want the intrinsic fields decoded", c)
+	}
+	if c.Url != "https://example.com" || c.NearText != "context" || c.Severity != 3 {
+		t.Errorf("credential = %+v, want every field after file_id decoded too", c)
+	}
+	if c.FileID != 0 {
+		t.Errorf("FileID = %d, want it left alone (the old string id does not fit a uint)", c.FileID)
+	}
+}
+
+// A leak with no file_id is not attributable to any file, but it must not fail
+// the whole batch either.
+func TestDecodeLeakWithoutFileID(t *testing.T) {
+	var e models.Email
+	fileID, err := decodeLeak([]byte(`{"email":"a@b.c","domain":"b.c"}`), &e)
+	if err != nil {
+		t.Fatalf("decodeLeak: %v", err)
+	}
+	if fileID != "" {
+		t.Errorf("file id = %q, want empty", fileID)
+	}
+	if e.Email != "a@b.c" {
+		t.Errorf("email = %q, want a@b.c", e.Email)
+	}
+}
+
+// A genuinely malformed document is still an error — the file_id tolerance must
+// not swallow real decode failures.
+func TestDecodeLeakRejectsBrokenJSON(t *testing.T) {
+	var c models.Credential
+	if _, err := decodeLeak([]byte(`{"username":`), &c); err == nil {
+		t.Error("decodeLeak accepted truncated JSON")
+	}
+}
+
+// decodeLeak runs once per source leak document — tens of millions of times in
+// a real migration — so what it allocates is what the collector has to chase.
+func BenchmarkDecodeLeak(b *testing.B) {
+	src := []byte(`{"file_id":"abc123","fingerprint":"abc123","bucket":"IntelX",
+		"username":"u@example.com","password":"p","url":"https://example.com",
+		"url_domain":"example.com","user_domain":"example.com","rule":"generic",
+		"near_text":"some surrounding context from the source file","severity":3}`)
+
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		var c models.Credential
+		if _, err := decodeLeak(src, &c); err != nil {
+			b.Fatal(err)
 		}
 	}
 }

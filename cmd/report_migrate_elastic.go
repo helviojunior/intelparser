@@ -671,30 +671,37 @@ func buildFile(client *elk.Client, srcIndex string, fm fileMeta, leaks *batchLea
 }
 
 // decodeLeak unmarshals a stored old-model leak document into a models leak
-// type and returns the file id it was attached to. The old envelope fields
-// (file_id/bucket/fingerprint) that the old writer appended are dropped first:
-// in particular file_id was stored as a string (the file fingerprint) and would
-// fail to unmarshal into the model's uint FileID field. The intrinsic value
-// fields (json tags) map straight through.
+// type and returns the file id it was attached to. The intrinsic value fields
+// (json tags) map straight through; the envelope fields the old writer appended
+// are not fields of the model, so encoding/json skips them on its own.
+//
+// The one exception is file_id, which the old model stored as the file
+// fingerprint -- a string, where the model's FieldID is a uint. That single
+// clash is expected on every document and is tolerated: encoding/json records
+// an UnmarshalTypeError for the offending field and carries on decoding the
+// rest, so the leak still arrives complete.
+//
+// This runs once per source leak document -- tens of millions of times in a
+// real migration -- so it decodes straight into the target instead of routing
+// through a map[string]json.RawMessage and re-marshalling it. That round-trip
+// allocated the whole document three extra times per leak, and on a dataset
+// this size the garbage it produced was a substantial part of what the
+// collector had to chase.
 func decodeLeak(src json.RawMessage, v interface{}) (string, error) {
-	var m map[string]json.RawMessage
-	if err := json.Unmarshal(src, &m); err != nil {
+	var envelope struct {
+		FileID string `json:"file_id"`
+	}
+	if err := json.Unmarshal(src, &envelope); err != nil {
 		return "", err
 	}
-	var fileID string
-	if raw, ok := m["file_id"]; ok {
-		if err := json.Unmarshal(raw, &fileID); err != nil {
+
+	if err := json.Unmarshal(src, v); err != nil {
+		var typeErr *json.UnmarshalTypeError
+		if !errors.As(err, &typeErr) || typeErr.Field != "file_id" {
 			return "", err
 		}
 	}
-	delete(m, "file_id")
-	delete(m, "fingerprint")
-	delete(m, "bucket")
-	b, err := json.Marshal(m)
-	if err != nil {
-		return "", err
-	}
-	return fileID, json.Unmarshal(b, v)
+	return envelope.FileID, nil
 }
 
 // getFileContent fetches only the content field of a single old file document.
