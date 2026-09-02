@@ -887,10 +887,9 @@ func (ew *ElasticWriter) queueLeak(leakIndex, leakID string, doc []byte, ts stri
 		}
 	} else {
 		m[leakID] = &pendingLeak{doc: doc, first: ts, last: ts}
-		// Rough per-line cost: the document plus the update envelope (action
-		// metadata, script reference, both dates). Only used to decide when to
-		// flush, so an estimate is enough.
-		n := len(doc) + len(leakID) + 220
+		// Exactly what this leak will add to the payload: the document, the
+		// _id, and the fixed-width update envelope around both.
+		n := len(doc) + len(leakID) + elkLeakLineOverhead
 		ew.pendBytes[leakIndex] += n
 		ew.pendTotal += n
 	}
@@ -918,17 +917,43 @@ func (ew *ElasticWriter) queueLeak(leakIndex, leakID string, doc []byte, ts stri
 // the _ctrl index) for a bulk "index" action. Ids are deterministic, so a
 // repeat inside the buffer is the same document and simply overwrites.
 func (ew *ElasticWriter) queueDoc(index, id string, doc []byte) error {
+	n := len(doc) + len(id) + elkDocLineOverhead
+
+	// A document that on its own exceeds the whole bulk budget cannot be split
+	// -- a file's _ctrl document carries the file's entire content, and a large
+	// leak file runs to tens of MB. Buffering it anyway would put it on the
+	// wire together with up to ELK_BULK_SIZE other documents, so the one
+	// request that was already too big gets bigger. Send it alone instead, and
+	// drop any copy of it still pending so the buffer cannot flush a superseded
+	// version over the one just written.
+	if n >= elkBulkMaxSize {
+		ew.bulkMu.Lock()
+		if prev, ok := ew.pendIndexes[index][id]; ok {
+			was := len(prev) + len(id) + elkDocLineOverhead
+			ew.pendBytes[index] -= was
+			ew.pendTotal -= was
+			delete(ew.pendIndexes[index], id)
+		}
+		spill := ew.overBudgetLocked()
+		ew.bulkMu.Unlock()
+
+		err := ew.sendBulk(index, "index", map[string][]byte{id: doc})
+		if serr := ew.sendDetached(spill); serr != nil && err == nil {
+			err = serr
+		}
+		return err
+	}
+
 	ew.bulkMu.Lock()
 	m := ew.pendIndexes[index]
 	if m == nil {
 		m = map[string][]byte{}
 		ew.pendIndexes[index] = m
 	}
-	n := len(doc) + len(id) + 48
 	if prev, ok := m[id]; ok {
-		// Undo the whole previous estimate, envelope included, or a replayed
-		// id inflates the budget every time it comes round again.
-		was := len(prev) + len(id) + 48
+		// Undo the whole previous entry, envelope included, or a replayed id
+		// inflates the budget every time it comes round again.
+		was := len(prev) + len(id) + elkDocLineOverhead
 		ew.pendBytes[index] -= was
 		ew.pendTotal -= was
 	}
@@ -1531,6 +1556,50 @@ func leakUpsertLine(p *pendingLeak) []byte {
 		elkLeakScriptJSON, jsonQuote(p.first), jsonQuote(p.last), seed))
 }
 
+// bulkUpdateMeta renders the action line of one buffered leak upsert.
+// retry_on_conflict lets concurrent workers touching the same shared leak retry
+// instead of failing with a version conflict.
+func bulkUpdateMeta(id string) string {
+	return fmt.Sprintf(`{ "update" : { "_id" : %s, "retry_on_conflict" : 5 } }%s`, jsonQuote(id), "\n")
+}
+
+// bulkDocMeta renders the action line of one buffered full document.
+func bulkDocMeta(action, id string) string {
+	return fmt.Sprintf(`{ %s : { "_id" : %s } }%s`, jsonQuote(action), jsonQuote(id), "\n")
+}
+
+// elkLeakLineOverhead and elkDocLineOverhead are the exact number of bytes one
+// buffered document adds to a bulk payload beyond its own body and its _id: the
+// action line, and for a leak the script/params envelope leakUpsertLine wraps
+// the document in.
+//
+// They are constants because everything variable in them is fixed-width: both
+// leak timestamps are RFC3339 UTC (a 20-character layout with no fractional
+// part), and the painless script is the same 285 bytes on every single line.
+//
+// They are measured from the real renderers rather than written down, because a
+// written-down number is what ELK_BULK_BYTES used to be enforced with: the
+// estimate said 220 bytes per leak while the line actually costs 546, so a
+// budget of 5 MB was producing bulk requests of roughly 9 MB. A bulk budget
+// that does not match the bytes on the wire is not a budget.
+var (
+	elkLeakLineOverhead = measureLeakLineOverhead()
+	elkDocLineOverhead  = len(bulkDocMeta("index", "")) + 1 // + the newline after the body
+)
+
+// measureLeakLineOverhead renders one leak line with a known body and subtracts
+// the body, leaving the per-line cost of the envelope. The _id is empty, so the
+// two quotes jsonQuote adds around it are part of the overhead and callers add
+// only len(id).
+func measureLeakLineOverhead() int {
+	ts := time.Time{}.UTC().Format(time.RFC3339)
+	// A non-degenerate body: leakUpsertLine splices the dates into it, which
+	// costs one byte more than the empty-object branch it would otherwise take.
+	body := []byte(`{"a":1}`)
+	p := &pendingLeak{doc: body, first: ts, last: ts}
+	return len(bulkUpdateMeta("")) + len(leakUpsertLine(p)) + 1 - len(body)
+}
+
 // bulkLine is one document's contribution to a bulk request: the action
 // metadata and the body, already rendered as the two NDJSON lines they will be
 // sent as. Keeping them per document and in order is what lets a partially
@@ -1563,7 +1632,7 @@ func (ew *ElasticWriter) sendLeakBulk(index string, docs map[string]*pendingLeak
 	}
 	lines := make([]bulkLine, 0, len(docs))
 	for id, p := range docs {
-		meta := fmt.Sprintf(`{ "update" : { "_id" : %s, "retry_on_conflict" : 5 } }%s`, jsonQuote(id), "\n")
+		meta := bulkUpdateMeta(id)
 		body := leakUpsertLine(p)
 		nd := make([]byte, 0, len(meta)+len(body)+1)
 		nd = append(nd, meta...)
@@ -1583,7 +1652,7 @@ func (ew *ElasticWriter) sendBulk(index string, action string, docs map[string][
 	}
 	lines := make([]bulkLine, 0, len(docs))
 	for id, doc := range docs {
-		meta := fmt.Sprintf(`{ %s : { "_id" : %s } }%s`, jsonQuote(action), jsonQuote(id), "\n")
+		meta := bulkDocMeta(action, id)
 		nd := make([]byte, 0, len(meta)+len(doc)+1)
 		nd = append(nd, meta...)
 		nd = append(nd, doc...)

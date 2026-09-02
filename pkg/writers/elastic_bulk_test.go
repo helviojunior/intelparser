@@ -2,6 +2,8 @@ package writers
 
 import (
 	"encoding/json"
+	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -105,5 +107,102 @@ func TestQueueDocReplacesWithoutDoubleCounting(t *testing.T) {
 	}
 	if got := len(ew.pendIndexes["idx_ref"]); got != 1 {
 		t.Errorf("pending docs = %d, want 1", got)
+	}
+}
+
+// The whole point of ELK_BULK_BYTES is that it bounds what goes on the wire, so
+// what queueLeak/queueDoc charge against the budget has to be exactly what
+// renderBulk later produces. It used to be a guess (220 bytes per leak against a
+// real cost of 546), which is how a 5 MB budget turned into 9 MB requests.
+func TestPendingBytesMatchRenderedPayload(t *testing.T) {
+	ew := &ElasticWriter{
+		pendUpdates: map[string]map[string]*pendingLeak{},
+		pendIndexes: map[string]map[string][]byte{},
+		pendBytes:   map[string]int{},
+	}
+
+	const ts = "2026-06-01T00:00:00Z"
+	for i := 0; i < 10; i++ {
+		id := fmt.Sprintf("hash-%d", i)
+		if err := ew.queueLeak("idx_creds", id, []byte(`{"username":"u","password":"p"}`), ts); err != nil {
+			t.Fatal(err)
+		}
+		if err := ew.queueDoc("idx_ref", "ref-"+id, []byte(`{"file_id":"f","leak_id":"l"}`)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	leakLines := make([]bulkLine, 0)
+	for id, p := range ew.pendUpdates["idx_creds"] {
+		leakLines = append(leakLines, bulkLine{ndjson: append(append([]byte(bulkUpdateMeta(id)), leakUpsertLine(p)...), '\n')})
+	}
+	if got, want := len(renderBulk(leakLines)), ew.pendBytes["idx_creds"]; got != want {
+		t.Errorf("leak payload = %d bytes, budget charged %d", got, want)
+	}
+
+	docLines := make([]bulkLine, 0)
+	for id, doc := range ew.pendIndexes["idx_ref"] {
+		docLines = append(docLines, bulkLine{ndjson: append(append([]byte(bulkDocMeta("index", id)), doc...), '\n')})
+	}
+	if got, want := len(renderBulk(docLines)), ew.pendBytes["idx_ref"]; got != want {
+		t.Errorf("doc payload = %d bytes, budget charged %d", got, want)
+	}
+
+	if ew.pendTotal != ew.pendBytes["idx_creds"]+ew.pendBytes["idx_ref"] {
+		t.Errorf("pendTotal = %d, want the sum of the per-index budgets", ew.pendTotal)
+	}
+}
+
+// A file's _ctrl document carries the file's whole content, so it can be larger
+// than the entire bulk budget on its own. It cannot be split, but it must not
+// drag a full buffer onto the wire with it.
+func TestQueueDocSendsOversizedDocumentAlone(t *testing.T) {
+	f := &fakeBulkES{action: "index"}
+	ew, closeFn := newTestWriter(t, f)
+	defer closeFn()
+
+	// A small document first: it must stay buffered.
+	if err := ew.queueDoc("idx_ctrl", "small", []byte(`{"content":"x"}`)); err != nil {
+		t.Fatal(err)
+	}
+	big := fmt.Sprintf(`{"content":%q}`, strings.Repeat("x", elkBulkMaxSize+1))
+	if err := ew.queueDoc("idx_ctrl", "big", []byte(big)); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(f.calls) != 1 {
+		t.Fatalf("bulk requests = %d, want 1 (the oversized document, alone)", len(f.calls))
+	}
+	if got := f.calls[0]; len(got) != 1 || got[0] != "big" {
+		t.Errorf("oversized bulk carried %v, want just [big]", got)
+	}
+	if _, ok := ew.pendIndexes["idx_ctrl"]["small"]; !ok {
+		t.Error("the small document should still be buffered")
+	}
+}
+
+// A superseded copy of an oversized document must not be left in the buffer to
+// be flushed over the version that was just written.
+func TestQueueDocOversizedDropsPendingCopy(t *testing.T) {
+	f := &fakeBulkES{action: "index"}
+	ew, closeFn := newTestWriter(t, f)
+	defer closeFn()
+
+	if err := ew.queueDoc("idx_ctrl", "f1", []byte(`{"content":"stale"}`)); err != nil {
+		t.Fatal(err)
+	}
+	big := fmt.Sprintf(`{"content":%q}`, strings.Repeat("x", elkBulkMaxSize+1))
+	if err := ew.queueDoc("idx_ctrl", "f1", []byte(big)); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, ok := ew.pendIndexes["idx_ctrl"]["f1"]; ok {
+		t.Error("the superseded copy is still buffered and would overwrite the document just written")
+	}
+	if got := ew.pendBytes["idx_ctrl"]; got != 0 {
+		t.Errorf("pendBytes = %d after dropping the only buffered document, want 0", got)
+	}
+	if ew.pendTotal != 0 {
+		t.Errorf("pendTotal = %d, want 0", ew.pendTotal)
 	}
 }
