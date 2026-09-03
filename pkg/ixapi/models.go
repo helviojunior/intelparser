@@ -48,6 +48,14 @@ type Tag struct {
     Value string `json:"value" gorm:"uniqueIndex:idx_tag_class_v"` // The value
 }
 
+func (tag *Tag) BeforeCreate(tx *gorm.DB) (err error) {
+    tx.Statement.AddClause(clause.OnConflict{
+        Columns:   []clause.Column{{Name: "item_id"}, {Name: "class"}, {Name: "value"}},
+        DoUpdates: clause.AssignmentColumns([]string{"item_id"}),
+    })
+    return nil
+}
+
 func (Tag) TableName() string {
     return "intex_tag"
 }
@@ -58,6 +66,14 @@ type Relationship struct {
     ItemID   uint `json:"item_id" gorm:"uniqueIndex:idx_relation_target_r"`
     Target   string `json:"target" gorm:"uniqueIndex:idx_relation_target_r"`   // Target item systemid
     Relation int    `json:"relation" gorm:"uniqueIndex:idx_relation_target_r"` // The relationship, see RelationX
+}
+
+func (relationship *Relationship) BeforeCreate(tx *gorm.DB) (err error) {
+    tx.Statement.AddClause(clause.OnConflict{
+        Columns:   []clause.Column{{Name: "item_id"}, {Name: "target"}, {Name: "relation"}},
+        DoUpdates: clause.AssignmentColumns([]string{"item_id"}),
+    })
+    return nil
 }
 
 func (Relationship) TableName() string {
