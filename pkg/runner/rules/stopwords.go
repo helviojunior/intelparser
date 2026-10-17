@@ -28,6 +28,8 @@ var EmailDomainStopWords = []string{
 	//"oi.com",
 	//"ymail.com",
 	//"yandex.ru",
+	"example.com",
+	"admin.com",
 }
 
 var UrlDomainStopWords = []string{
@@ -52,6 +54,8 @@ var UrlDomainStopWords = []string{
 	"www.amazon.com",
 	//"ymail.com",
 	"yandex.ru",
+	"example.com",
+	"admin.com",
 }
 
 var DefaultStopWords = []string{
@@ -78,6 +82,7 @@ var DefaultStopWords = []string{
 	"addon",
 	"addres",
 	"admin",
+	"admin@gmail.com",
 	"adobe",
 	"advanced",
 	"adventure",
