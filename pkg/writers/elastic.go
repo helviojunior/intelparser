@@ -744,7 +744,7 @@ func (ew *ElasticWriter) refIndexName(indexedAt time.Time) string {
 // first time it is needed in this run, then memoises it so subsequent files in
 // the same month skip the Exists/Create/settings round-trips. The reference
 // document carries the pointer (file_id, leak_id, type) plus the
-// occurrence-specific context (bucket, near_text, line, source, file_name)
+// occurrence-specific context (bucket, leak_date, near_text, line, source, file_name)
 // that does not belong on the deduplicated leak itself.
 func (ew *ElasticWriter) ensureRefIndex(index string) error {
 	if _, ok := ew.refIndexes.Load(index); ok {
@@ -762,6 +762,7 @@ func (ew *ElasticWriter) ensureRefIndex(index string) error {
 
 	err := ew.CreateIndex(index, buildIndexBody(elkRefsShards, `{
                     "indexed_at": {"type": "date"},
+                    "leak_date": {"type": "date"},
                     "file_id": {"type": "keyword"},
                     "leak_id": {"type": "keyword"},
                     "type": {"type": "keyword"},
@@ -1347,12 +1348,16 @@ func refID(fileID, leakID string) string {
 // Nothing is flushed here: both go into the writer-wide buffers, which span
 // files and flush on elkBulkCount / elkBulkMaxSize (see queueLeak / queueDoc).
 func ingestLeaks[T models.LeakIndexable](ew *ElasticWriter, leakIndex, refIndex,
-	fileID, bucket string, indexedAt time.Time, items []T) error {
+	fileID, bucket string, indexedAt, leakDate time.Time, items []T) error {
 
 	if len(items) == 0 {
 		return nil
 	}
 	nowStr := indexedAt.UTC().Format(time.RFC3339)
+	leakDateStr := ""
+	if !leakDate.IsZero() {
+		leakDateStr = leakDate.UTC().Format(time.RFC3339)
+	}
 
 	for _, it := range items {
 		leakID := it.LeakID()
@@ -1368,6 +1373,9 @@ func ingestLeaks[T models.LeakIndexable](ew *ElasticWriter, leakIndex, refIndex,
 		// Reference doc: pointer + occurrence context.
 		ref := it.RefDoc()
 		ref["indexed_at"] = nowStr
+		if leakDateStr != "" {
+			ref["leak_date"] = leakDateStr
+		}
 		ref["file_id"] = fileID
 		ref["leak_id"] = leakID
 		ref["type"] = it.LeakType()
@@ -1416,27 +1424,27 @@ func (ew *ElasticWriter) writeSync(result *models.File) error {
 	go func() {
 		defer wg.Done()
 		errs[0] = ingestLeaks(ew, ew.Index+"_creds", refIndex,
-			fileID, result.Bucket, indexedAt, result.Credentials)
+			fileID, result.Bucket, indexedAt, result.Date, result.Credentials)
 	}()
 	go func() {
 		defer wg.Done()
 		errs[1] = ingestLeaks(ew, ew.Index+"_urls", refIndex,
-			fileID, result.Bucket, indexedAt, result.URLs)
+			fileID, result.Bucket, indexedAt, result.Date, result.URLs)
 	}()
 	go func() {
 		defer wg.Done()
 		errs[2] = ingestLeaks(ew, ew.Index+"_emails", refIndex,
-			fileID, result.Bucket, indexedAt, result.Emails)
+			fileID, result.Bucket, indexedAt, result.Date, result.Emails)
 	}()
 	go func() {
 		defer wg.Done()
 		errs[3] = ingestLeaks(ew, ew.Index+"_phone", refIndex,
-			fileID, result.Bucket, indexedAt, result.Phones)
+			fileID, result.Bucket, indexedAt, result.Date, result.Phones)
 	}()
 	go func() {
 		defer wg.Done()
 		errs[4] = ingestLeaks(ew, ew.Index+"_document", refIndex,
-			fileID, result.Bucket, indexedAt, result.Documents)
+			fileID, result.Bucket, indexedAt, result.Date, result.Documents)
 	}()
 	wg.Wait()
 
